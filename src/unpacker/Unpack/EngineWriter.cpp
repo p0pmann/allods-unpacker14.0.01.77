@@ -40,7 +40,6 @@ bool   g_traceFirst = true;      // detail-log the first few of the first contai
 char   g_onlyMap[64];            // OnlyMap=<substring>: mount just that database
 char   g_scope[512];              // normalized resource directory prefix, ending '/'
 char   g_containerLabel[64];      // client calls do not preserve register-held arguments
-char   g_mapArchive[MAX_PATH];
 UINT32 g_limit = 0;
 MapLoader::Database g_currentMap;
 const UINT32 MAX_MAPS = 1024;
@@ -498,11 +497,6 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
     // run the same pipeline over it. Installing one only drops a single
     // reference on the previous container, so the pack stays mapped and hrefs
     // that point into it keep resolving.
-    if (!MapLoader::archivePath(g_mapArchive, MAX_PATH)) {
-        Log::write("EngineWriter: ALL DONE files=%u (no map databases found)", total);
-        return;
-    }
-
     // Enumerate FIRST, then mount. A find handle must not be held across the
     // serializer: an x86 __except does not restore the non-volatile registers
     // the faulting callee used, so a handle the compiler parked in one comes
@@ -522,7 +516,7 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
         HrefMap::setContainerBase(Pack::blobBase(), false);
         // The loader drops the fixup stream, so read this stored archive entry
         // in place to recover references into pack.bin that were never bound.
-        Fixups::loadSlice(g_mapArchive, g_currentMap.offset, g_currentMap.size);
+        Fixups::loadSlice(g_currentMap.archive, g_currentMap.offset, g_currentMap.size);
         total += runContainer(g_currentMap.path + 4); // drop "Bin/"
         ++maps;
     }

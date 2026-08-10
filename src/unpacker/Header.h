@@ -96,12 +96,12 @@ namespace MapLoader {
 // Per-map content lives in Maps_*.bin containers the client only mounts on
 // world entry. These mount one directly, swapping it in on the resource manager.
 struct Database {
+    char   archive[MAX_PATH];               // installed .pak containing the entry
     char   path[64];                       // client VFS path: Bin/Maps_*.bin
-    UINT32 offset;                         // stored entry bytes in BaseLocrus.pak
+    UINT32 offset;                         // stored entry bytes in archive
     UINT32 size;
 };
 bool dataRoot(char* out, UINT32 cch);      // "<client>\data\"
-bool archivePath(char* out, UINT32 cch);   // "<client>\data\Packs\BaseLocrus.pak"
 UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter);
 bool load(const char* virtualPath);
 }

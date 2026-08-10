@@ -1,9 +1,9 @@
-// Unpack/MapLoader.cpp -- mount Maps_*.bin directly from BaseLocrus.pak.
+// Unpack/MapLoader.cpp -- mount Maps_*.bin directly from installed .pak files.
 //
 // The installed client keeps its per-map databases as stored ZIP entries under
-// data/Packs/BaseLocrus.pak. The client VFS can mount those entries by their
-// virtual Bin/... name. We parse only the ZIP directory so Fixups can also read
-// the same bytes in place; no Maps_*.bin file is copied into data/Bin.
+// data/Packs. Archive names are discovered at runtime. The client VFS can mount
+// entries by their virtual Bin/... name. We parse only the ZIP directories so
+// Fixups can read the same bytes in place; nothing is copied into data/Bin.
 #include "../Header.h"
 
 #include <cctype>
@@ -61,30 +61,20 @@ bool dataRoot(char* out, UINT32 cch)
     static const char* kData[] = { "data", "Data" };
     for (int i = 0; i < 2; ++i) {
         char probe[MAX_PATH];
-        wsprintfA(probe, "%s\\%s\\Packs\\BaseLocrus.pak", exe, kData[i]);
-        if (GetFileAttributesA(probe) == INVALID_FILE_ATTRIBUTES) continue;
+        wsprintfA(probe, "%s\\%s\\Packs", exe, kData[i]);
+        DWORD attrs = GetFileAttributesA(probe);
+        if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) continue;
         wsprintfA(probe, "%s\\%s\\", exe, kData[i]);
         lstrcpynA(out, probe, (int)cch);
         return true;
     }
-    Log::write("MapLoader: no data\\Packs\\BaseLocrus.pak next to %s", exe);
+    Log::write("MapLoader: no data\\Packs directory next to %s", exe);
     return false;
 }
 
-bool archivePath(char* out, UINT32 cch)
+UINT32 enumerateArchive(const char* archive, Database* out, UINT32 cap,
+                        const char* nameFilter)
 {
-    char root[MAX_PATH];
-    if (!dataRoot(root, MAX_PATH)) return false;
-    char path[MAX_PATH];
-    wsprintfA(path, "%sPacks\\BaseLocrus.pak", root);
-    lstrcpynA(out, path, (int)cch);
-    return true;
-}
-
-UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter)
-{
-    char archive[MAX_PATH];
-    if (!archivePath(archive, MAX_PATH)) return 0;
     HANDLE h = CreateFileA(archive, GENERIC_READ, FILE_SHARE_READ, nullptr,
                            OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
     if (h == INVALID_HANDLE_VALUE) return 0;
@@ -134,6 +124,7 @@ UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter)
                 u32(local) == 0x04034B50) {
                 UINT32 dataAt = localAt + 30u + u16(local + 26) + u16(local + 28);
                 if (dataAt <= fileSize && compSize <= fileSize - dataAt && found < cap) {
+                    lstrcpynA(out[found].archive, archive, MAX_PATH);
                     lstrcpynA(out[found].path, name, sizeof(out[found].path));
                     out[found].offset = dataAt;
                     out[found].size = compSize;
@@ -145,6 +136,33 @@ UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter)
     }
     VirtualFree(cd, 0, MEM_RELEASE);
     CloseHandle(h);
+    return found;
+}
+
+UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter)
+{
+    char root[MAX_PATH];
+    if (!dataRoot(root, MAX_PATH)) return 0;
+
+    char pattern[MAX_PATH];
+    wsprintfA(pattern, "%sPacks\\*.pak", root);
+    WIN32_FIND_DATAA fd;
+    HANDLE find = FindFirstFileA(pattern, &fd);
+    if (find == INVALID_HANDLE_VALUE) {
+        Log::write("MapLoader: no .pak archives found in %sPacks", root);
+        return 0;
+    }
+
+    UINT32 found = 0, archives = 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        char archive[MAX_PATH];
+        wsprintfA(archive, "%sPacks\\%s", root, fd.cFileName);
+        ++archives;
+        found += enumerateArchive(archive, out + found, cap - found, nameFilter);
+    } while (found < cap && FindNextFileA(find, &fd));
+    FindClose(find);
+    Log::write("MapLoader: searched %u archives", archives);
     return found;
 }
 
