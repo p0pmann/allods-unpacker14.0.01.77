@@ -17,6 +17,7 @@ UNPACKER_SOURCES= \
     $(HOOKS)\Hooks.cpp \
     $(UNPACKER)\Tools\Freeze.cpp \
     $(UNPACKER)\Tools\Fs.cpp \
+    $(UNPACKER)\Tools\Launch.cpp \
     $(UNPACKER)\Tools\Log.cpp \
     $(UNPACKER)\Unpack\EngineWriter.cpp \
     $(UNPACKER)\Unpack\HrefWriter.cpp \

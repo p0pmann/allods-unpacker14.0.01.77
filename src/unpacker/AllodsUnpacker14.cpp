@@ -79,6 +79,7 @@ DWORD WINAPI init(LPVOID)
     }
 
     if (!Hooks::init()) { Log::write("MinHook init FAILED"); return 0; }
+    if (!Launch::install()) return 0;
 
     g_freezeStep = cfg("FreezeStep", 1);
     Log::write("config: FreezeStep=%d Extract=%d OutputDir=%s (%s)",

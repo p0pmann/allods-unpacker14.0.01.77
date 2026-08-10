@@ -45,6 +45,10 @@ void install(int stepN);          // freeze the main thread at app-step N
 void spoofTimers();               // QPC/GetTickCount must be frozen too or the
 }                                 // protector's watchdog kills the process
 
+namespace Launch {
+bool install();                   // supply launcher context and patch startup gates
+}
+
 namespace Fs {
 bool setRoot(const char* dir);                    // output root, created if absent
 bool write(const char* relPath, const void* data, UINT32 n);

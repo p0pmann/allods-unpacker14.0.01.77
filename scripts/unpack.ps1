@@ -72,6 +72,8 @@ if (-not (Test-Path -LiteralPath $gameExe -PathType Leaf)) {
     throw "AOgame.exe was not found at '$gameExe'."
 }
 
+New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+
 if (-not $NoBuild) {
     Invoke-UnpackerBuild
 }
