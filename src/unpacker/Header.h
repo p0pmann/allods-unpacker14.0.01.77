@@ -65,6 +65,7 @@ void*       object();             // the fake source object handed to the archiv
 
 namespace Fixups {
 bool   load(const char* containerPath);
+bool   loadSlice(const char* archivePath, UINT32 offset, UINT32 size);
 UINT32 targetFor(UINT32 slotBlobOffset);
 UINT32 count();
 }
@@ -94,8 +95,15 @@ const char* currentPath();        // resource being written, for relative hrefs
 namespace MapLoader {
 // Per-map content lives in Maps_*.bin containers the client only mounts on
 // world entry. These mount one directly, swapping it in on the resource manager.
-bool databaseDir(char* out, UINT32 cch);   // "<client>\data\Bin\"
-bool load(const char* absPath);
+struct Database {
+    char   path[64];                       // client VFS path: Bin/Maps_*.bin
+    UINT32 offset;                         // stored entry bytes in BaseLocrus.pak
+    UINT32 size;
+};
+bool dataRoot(char* out, UINT32 cch);      // "<client>\data\"
+bool archivePath(char* out, UINT32 cch);   // "<client>\data\Packs\BaseLocrus.pak"
+UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter);
+bool load(const char* virtualPath);
 }
 
 namespace HrefWriter {

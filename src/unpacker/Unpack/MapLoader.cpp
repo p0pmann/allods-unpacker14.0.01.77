@@ -1,39 +1,51 @@
-// Unpack/MapLoader.cpp -- extraction beyond pack.bin.
+// Unpack/MapLoader.cpp -- mount Maps_*.bin directly from BaseLocrus.pak.
 //
-// pack.bin is only ONE resource database. Per-map content (terrain, regions,
-// server objects, lightmaps) lives in ~300 sibling `Maps_<name>.bin` containers
-// that the client mounts on world entry -- which never happens at the freeze,
-// so none of it is in memory.
-//
-// The client's own loader is `sub_619850(path, altPath)`: it constructs a
-// GameMain::InplaceLoader (the same class as the pack, RTTI-confirmed), and on
-// success installs it at resourceManager+0x84 -- exactly the field PackReader
-// reads. So mounting a map database makes the whole existing pipeline point at
-// it with no other change.
-//
-// Installing releases the previous container by one reference. The pack is held
-// twice, so it survives every swap and cross-container hrefs keep resolving.
+// The installed client keeps its per-map databases as stored ZIP entries under
+// data/Packs/BaseLocrus.pak. The client VFS can mount those entries by their
+// virtual Bin/... name. We parse only the ZIP directory so Fixups can also read
+// the same bytes in place; no Maps_*.bin file is copied into data/Bin.
 #include "../Header.h"
 
+#include <cctype>
 #include <cstring>
 
 namespace {
 
 typedef char (__cdecl* LoadDbFn)(GameStr*, GameStr*);
 
-bool fileExists(const char* p)
+UINT16 u16(const BYTE* p) { return (UINT16)(p[0] | (p[1] << 8)); }
+UINT32 u32(const BYTE* p) { return (UINT32)p[0] | ((UINT32)p[1] << 8) |
+                                  ((UINT32)p[2] << 16) | ((UINT32)p[3] << 24); }
+
+bool readAt(HANDLE h, UINT32 at, void* dst, UINT32 size)
 {
-    return GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES;
+    if (SetFilePointer(h, at, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER &&
+        GetLastError() != NO_ERROR) return false;
+    DWORD got = 0, n = 0;
+    while (got < size && ReadFile(h, (BYTE*)dst + got, size - got, &n, nullptr) && n) got += n;
+    return got == size;
+}
+
+bool startsWithI(const char* s, const char* prefix)
+{
+    while (*prefix) {
+        if (!*s || tolower((unsigned char)*s) != tolower((unsigned char)*prefix)) return false;
+        ++s; ++prefix;
+    }
+    return true;
+}
+
+bool endsWithI(const char* s, const char* suffix)
+{
+    size_t a = strlen(s), b = strlen(suffix);
+    return a >= b && startsWithI(s + a - b, suffix);
 }
 
 } // namespace
 
 namespace MapLoader {
 
-// The databases sit next to pack.bin, under the client's data root -- one level
-// up from the executable. Derived rather than configured so nothing is tied to
-// one installation.
-bool databaseDir(char* out, UINT32 cch)
+bool dataRoot(char* out, UINT32 cch)
 {
     char exe[MAX_PATH];
     if (!GetModuleFileNameA(nullptr, exe, MAX_PATH)) return false;
@@ -49,53 +61,107 @@ bool databaseDir(char* out, UINT32 cch)
     static const char* kData[] = { "data", "Data" };
     for (int i = 0; i < 2; ++i) {
         char probe[MAX_PATH];
-        wsprintfA(probe, "%s\\%s\\Bin\\pack.bin", exe, kData[i]);
-        if (!fileExists(probe)) continue;
-        wsprintfA(probe, "%s\\%s\\Bin\\", exe, kData[i]);
+        wsprintfA(probe, "%s\\%s\\Packs\\BaseLocrus.pak", exe, kData[i]);
+        if (GetFileAttributesA(probe) == INVALID_FILE_ATTRIBUTES) continue;
+        wsprintfA(probe, "%s\\%s\\", exe, kData[i]);
         lstrcpynA(out, probe, (int)cch);
         return true;
     }
-    Log::write("MapLoader: no data\\Bin next to %s", exe);
+    Log::write("MapLoader: no data\\Packs\\BaseLocrus.pak next to %s", exe);
     return false;
 }
 
-// Mount a database. The engine resolves its own paths against the data root, so
-// the absolute form is tried first and a couple of relative spellings after it;
-// whichever works is remembered for the remaining databases.
-bool load(const char* absPath)
+bool archivePath(char* out, UINT32 cch)
 {
-    static int form = -1;
+    char root[MAX_PATH];
+    if (!dataRoot(root, MAX_PATH)) return false;
+    char path[MAX_PATH];
+    wsprintfA(path, "%sPacks\\BaseLocrus.pak", root);
+    lstrcpynA(out, path, (int)cch);
+    return true;
+}
+
+UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter)
+{
+    char archive[MAX_PATH];
+    if (!archivePath(archive, MAX_PATH)) return 0;
+    HANDLE h = CreateFileA(archive, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    UINT32 fileSize = GetFileSize(h, nullptr);
+    UINT32 tailSize = fileSize < 65557 ? fileSize : 65557;
+    BYTE* tail = (BYTE*)VirtualAlloc(nullptr, tailSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!tail || !readAt(h, fileSize - tailSize, tail, tailSize)) {
+        if (tail) VirtualFree(tail, 0, MEM_RELEASE);
+        CloseHandle(h); return 0;
+    }
+
+    const BYTE* eocd = nullptr;
+    for (UINT32 i = tailSize - 22; ; --i) {
+        if (u32(tail + i) == 0x06054B50) { eocd = tail + i; break; }
+        if (!i) break;
+    }
+    if (!eocd) { VirtualFree(tail, 0, MEM_RELEASE); CloseHandle(h); return 0; }
+    UINT32 count = u16(eocd + 10), cdSize = u32(eocd + 12), cdAt = u32(eocd + 16);
+    VirtualFree(tail, 0, MEM_RELEASE);
+    if (!count || cdAt > fileSize || cdSize > fileSize - cdAt) { CloseHandle(h); return 0; }
+
+    BYTE* cd = (BYTE*)VirtualAlloc(nullptr, cdSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!cd || !readAt(h, cdAt, cd, cdSize)) {
+        if (cd) VirtualFree(cd, 0, MEM_RELEASE);
+        CloseHandle(h); return 0;
+    }
+
+    UINT32 found = 0, pos = 0;
+    for (UINT32 i = 0; i < count && pos + 46 <= cdSize; ++i) {
+        const BYTE* c = cd + pos;
+        if (u32(c) != 0x02014B50) break;
+        UINT32 compSize = u32(c + 20), rawSize = u32(c + 24), localAt = u32(c + 42);
+        UINT16 method = u16(c + 10), nameLen = u16(c + 28);
+        UINT16 extraLen = u16(c + 30), commentLen = u16(c + 32), disk = u16(c + 34);
+        UINT32 next = pos + 46u + nameLen + extraLen + commentLen;
+        if (next > cdSize) break;
+
+        char name[128];
+        UINT32 copy = nameLen < sizeof(name) - 1 ? nameLen : sizeof(name) - 1;
+        memcpy(name, c + 46, copy); name[copy] = 0;
+        for (char* p = name; *p; ++p) if (*p == '\\') *p = '/';
+        if (nameLen < sizeof(name) && method == 0 && disk == 0 && compSize == rawSize &&
+            startsWithI(name, "Bin/Maps_") && endsWithI(name, ".bin") &&
+            (!nameFilter || !*nameFilter || strstr(name, nameFilter))) {
+            BYTE local[30];
+            if (localAt <= fileSize - sizeof(local) && readAt(h, localAt, local, sizeof(local)) &&
+                u32(local) == 0x04034B50) {
+                UINT32 dataAt = localAt + 30u + u16(local + 26) + u16(local + 28);
+                if (dataAt <= fileSize && compSize <= fileSize - dataAt && found < cap) {
+                    lstrcpynA(out[found].path, name, sizeof(out[found].path));
+                    out[found].offset = dataAt;
+                    out[found].size = compSize;
+                    ++found;
+                }
+            }
+        }
+        pos = next;
+    }
+    VirtualFree(cd, 0, MEM_RELEASE);
+    CloseHandle(h);
+    return found;
+}
+
+bool load(const char* virtualPath)
+{
     BYTE* base = (BYTE*)GetModuleHandleA(nullptr);
     LoadDbFn LoadDb = (LoadDbFn)(base + (Off::FN_LOAD_DB - Off::IMAGE_BASE));
-
-    const char* name = absPath;
-    for (const char* p = absPath; *p; ++p) if (*p == '\\' || *p == '/') name = p + 1;
-
-    char cand[3][MAX_PATH];
-    lstrcpynA(cand[0], absPath, MAX_PATH);
-    wsprintfA(cand[1], "../data/Bin/%s", name);
-    wsprintfA(cand[2], "Bin/%s", name);
-
-    for (int i = 0; i < 3; ++i) {
-        if (form >= 0 && i != form) continue;
-
-        char buf[MAX_PATH];
-        lstrcpynA(buf, cand[i], MAX_PATH);
-        GameStr path; path.set(buf, lstrlenA(buf));
-        char empty[2] = { 0, 0 };
-        GameStr alt;  alt.set(empty, 0);
-
-        char ok = 0;
-        __try { ok = LoadDb(&path, &alt); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { ok = 0; }
-
-        if (ok) {
-            if (form != i) { form = i; Log::write("MapLoader: path form %d works (%s)", i, buf); }
-            return true;
-        }
-        if (form >= 0) break;               // the known-good form failed
-    }
-    return false;
+    char buf[MAX_PATH];
+    lstrcpynA(buf, virtualPath, MAX_PATH);
+    GameStr path; path.set(buf, lstrlenA(buf));
+    char empty[2] = { 0, 0 };
+    GameStr alt; alt.set(empty, 0);
+    char ok = 0;
+    __try { ok = LoadDb(&path, &alt); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { ok = 0; }
+    if (!ok) Log::write("MapLoader: mount failed (%s)", virtualPath);
+    return ok != 0;
 }
 
 } // namespace MapLoader

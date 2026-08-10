@@ -39,6 +39,10 @@ char   g_curPath[512];
 bool   g_traceFirst = true;      // detail-log the first few of the first container
 char   g_onlyMap[64];            // OnlyMap=<substring>: mount just that database
 char   g_scope[512];              // normalized resource directory prefix, ending '/'
+char   g_containerLabel[64];      // client calls do not preserve register-held arguments
+char   g_mapArchive[MAX_PATH];
+UINT32 g_limit = 0;
+MapLoader::Database g_currentMap;
 const UINT32 MAX_MAPS = 1024;
 
 void setScopeFilter(const char* scope)
@@ -247,12 +251,7 @@ const char* dataRoot()
     static bool tried = false;
     if (!tried) {
         tried = true;
-        char dir[MAX_PATH];
-        if (MapLoader::databaseDir(dir, MAX_PATH)) {   // "<client>\data\Bin\"
-            int n = lstrlenA(dir);
-            if (n > 4) dir[n - 4] = 0;                 // drop "Bin\"
-            lstrcpynA(root, dir, MAX_PATH);
-        }
+        MapLoader::dataRoot(root, MAX_PATH);
     }
     return root;
 }
@@ -421,9 +420,10 @@ namespace EngineWriter {
 const char* currentPath() { return g_curPath; }
 
 // Serialize every resource of the container PackReader currently has open.
-UINT32 runContainer(const char* label, UINT32 limit)
+UINT32 runContainer(const char* label)
 {
-    if (!Pack::count()) { Log::write("EngineWriter: %s is empty", label); return 0; }
+    lstrcpynA(g_containerLabel, label, sizeof(g_containerLabel));
+    if (!Pack::count()) { Log::write("EngineWriter: %s is empty", g_containerLabel); return 0; }
     // Hrefs are best-effort; a container still extracts without them.
     HrefMap::addCurrentContainer();
 
@@ -433,7 +433,7 @@ UINT32 runContainer(const char* label, UINT32 limit)
     // turned the loop counter into a random small number and made the pass run
     // forever. Keeping the state in memory costs nothing measurable here.
     volatile UINT32 total = Pack::count();
-    Log::write("EngineWriter: %s -> %u resources", label, total);
+    Log::write("EngineWriter: %s -> %u resources", g_containerLabel, total);
 
     volatile UINT32 selected = 0, written = 0, noType = 0, empty = 0, failed = 0, kept = 0;
     for (volatile UINT32 i = 0; i < total; ++i) {
@@ -441,7 +441,7 @@ UINT32 runContainer(const char* label, UINT32 limit)
         if (!r) break;                               // index can never run past the table
         const char* path = Pack::path(*r);
         if (!pathMatchesScope(path)) continue;
-        if (limit && selected >= limit) break;
+        if (g_limit && selected >= g_limit) break;
         bool trace = (selected < 5) && g_traceFirst;
         ++selected;
         UINT32 objAddr = Pack::blobBase() + r->blobOff;
@@ -471,7 +471,7 @@ UINT32 runContainer(const char* label, UINT32 limit)
             Log::write("EngineWriter: %u written (at %u/%u)", written, i, total);
     }
     Log::write("EngineWriter: %s done selected=%u written=%u noType=%u empty=%u failed=%u keptBetter=%u",
-               label, (UINT32)selected, (UINT32)written, (UINT32)noType,
+               g_containerLabel, (UINT32)selected, (UINT32)written, (UINT32)noType,
                (UINT32)empty, (UINT32)failed, (UINT32)kept);
     g_traceFirst = false;
     return written;
@@ -479,6 +479,7 @@ UINT32 runContainer(const char* label, UINT32 limit)
 
 void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* scope)
 {
+    g_limit = limit;
     lstrcpynA(g_onlyMap, onlyMap ? onlyMap : "", sizeof(g_onlyMap));
     if (g_onlyMap[0]) Log::write("EngineWriter: OnlyMap=%s", g_onlyMap);
     setScopeFilter(scope);
@@ -491,14 +492,13 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
     if (!Fs::setRoot(outDir)) { Log::write("EngineWriter: cannot create %s", outDir); return; }
 
     HrefMap::setContainerBase(Pack::blobBase(), true);
-    volatile UINT32 total = runContainer("pack.bin", limit);
+    volatile UINT32 total = runContainer("pack.bin");
 
     // Per-map databases are not mounted at the freeze -- mount each in turn and
     // run the same pipeline over it. Installing one only drops a single
     // reference on the previous container, so the pack stays mapped and hrefs
     // that point into it keep resolving.
-    char dir[MAX_PATH];
-    if (!MapLoader::databaseDir(dir, MAX_PATH)) {
+    if (!MapLoader::archivePath(g_mapArchive, MAX_PATH)) {
         Log::write("EngineWriter: ALL DONE files=%u (no map databases found)", total);
         return;
     }
@@ -507,35 +507,23 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
     // serializer: an x86 __except does not restore the non-volatile registers
     // the faulting callee used, so a handle the compiler parked in one comes
     // back as garbage and the walk dies silently after the first database.
-    static char names[MAX_MAPS][64];
-    volatile UINT32 nNames = 0;
-    {
-        char pattern[MAX_PATH];
-        wsprintfA(pattern, "%sMaps_*.bin", dir);
-        WIN32_FIND_DATAA fd;
-        HANDLE h = FindFirstFileA(pattern, &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                if (g_onlyMap[0] && !strstr(fd.cFileName, g_onlyMap)) continue;
-                if (nNames < MAX_MAPS) lstrcpynA(names[nNames++], fd.cFileName, 64);
-            } while (FindNextFileA(h, &fd));
-            FindClose(h);
-        }
-    }
+    static MapLoader::Database mapsFound[MAX_MAPS];
+    volatile UINT32 nNames = MapLoader::enumerate(mapsFound, MAX_MAPS, g_onlyMap);
     Log::write("EngineWriter: %u map databases to mount", nNames);
 
     volatile UINT32 maps = 0, mapFail = 0;
     for (volatile UINT32 i = 0; i < nNames; ++i) {
-        char full[MAX_PATH];
-        wsprintfA(full, "%s%s", dir, names[i]);
-        if (!MapLoader::load(full)) { ++mapFail; continue; }
+        // The client loader does not preserve every x86 non-volatile register.
+        // Copy this iteration's state to globals before crossing that boundary.
+        memcpy(&g_currentMap, &mapsFound[i], sizeof(g_currentMap));
+        if (!MapLoader::load(g_currentMap.path)) { ++mapFail; continue; }
         Pack::close();
         if (!Pack::open()) { ++mapFail; continue; }
         HrefMap::setContainerBase(Pack::blobBase(), false);
-        // The loader drops the fixup stream, so re-read it from the file to
-        // recover references into pack.bin that were never bound.
-        Fixups::load(full);
-        total += runContainer(names[i], limit);
+        // The loader drops the fixup stream, so read this stored archive entry
+        // in place to recover references into pack.bin that were never bound.
+        Fixups::loadSlice(g_mapArchive, g_currentMap.offset, g_currentMap.size);
+        total += runContainer(g_currentMap.path + 4); // drop "Bin/"
         ++maps;
     }
     Log::write("EngineWriter: all databases processed");

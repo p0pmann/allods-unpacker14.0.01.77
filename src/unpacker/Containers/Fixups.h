@@ -18,6 +18,10 @@ namespace Fixups {
 // loaded before, so it follows the currently mounted database.
 bool load(const char* containerPath);
 
+// Load a stored ZIP entry directly from an installed .pak archive. No loose
+// Maps_*.bin copy is needed.
+bool loadSlice(const char* archivePath, UINT32 offset, UINT32 size);
+
 // pack.bin blob offset for the reference stored at this blob-relative slot,
 // or 0 if the slot carries no external reference.
 UINT32 targetFor(UINT32 slotBlobOffset);

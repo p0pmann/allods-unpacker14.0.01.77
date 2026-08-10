@@ -57,17 +57,55 @@ bool buffers()
     return g_src && g_dst;
 }
 
-UINT32 readWhole(const char* path)
+UINT32 readSlice(const char* path, UINT32 offset, UINT32 size)
 {
     HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
                            OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (h == INVALID_HANDLE_VALUE) return 0;
     DWORD sz = GetFileSize(h, nullptr);
-    if (sz > SRC_CAP) { CloseHandle(h); return 0; }
+    if (size == 0) {
+        if (offset > sz) { CloseHandle(h); return 0; }
+        size = sz - offset;
+    }
+    if (size > SRC_CAP || offset > sz || size > sz - offset) { CloseHandle(h); return 0; }
+    SetFilePointer(h, offset, nullptr, FILE_BEGIN);
     DWORD got = 0, rd = 0;
-    while (got < sz && ReadFile(h, g_src + got, sz - got, &rd, nullptr) && rd) got += rd;
+    while (got < size && ReadFile(h, g_src + got, size - got, &rd, nullptr) && rd) got += rd;
     CloseHandle(h);
     return got;
+}
+
+bool parse(UINT32 rawLen)
+{
+    UncompressFn unc = zlibUncompress();
+    if (!unc || !rawLen) return false;
+    ULONG len = DST_CAP;
+    if (unc(g_dst, &len, g_src, rawLen) != 0) return false;
+
+    UINT32 blob0 = 0, blobSize = 0;
+    __try {
+        UINT32* w = (UINT32*)g_dst;
+        if (w[0] != 0 || w[1] != 8 || w[4] != 1 || w[6] != 8) return false;
+        UINT32 sec2 = 0x18 + w[5];
+        if (*(UINT32*)(g_dst + sec2) != 2) return false;
+        blob0 = sec2 + 0x2C + *(UINT32*)(g_dst + sec2 + 4);
+        if (blob0 >= len) return false;
+        blobSize = len - blob0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+
+    const UINT32* p = (const UINT32*)(g_dst + blob0);
+    UINT32 words = blobSize / 4;
+    for (UINT32 i = 0; i + 1 < words && g_n < EXT_CAP; i += 2) {
+        UINT32 k = p[i], v = p[i + 1];
+        if ((k & 7) != 4 || !v) continue;
+        UINT32 slot = (k - 4) >> 1;
+        if ((slot & 3) || slot >= blobSize) continue;
+        g_ext[g_n].slot = slot;
+        g_ext[g_n].target = v;
+        ++g_n;
+    }
+    qsort(g_ext, g_n, sizeof(Ext), cmpExt);
+    return g_n != 0;
 }
 
 } // namespace
@@ -86,46 +124,19 @@ bool load(const char* containerPath)
                                    MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if (!g_ext) return false;
     }
-    UncompressFn unc = zlibUncompress();
-    if (!unc) return false;
+    return parse(readSlice(containerPath, 0, 0));
+}
 
-    UINT32 rawLen = readWhole(containerPath);
-    if (!rawLen) return false;
-    ULONG len = DST_CAP;
-    if (unc(g_dst, &len, g_src, rawLen) != 0) return false;
-
-    UINT32 blob0 = 0, blobSize = 0;
-    __try {
-        UINT32* w = (UINT32*)g_dst;
-        if (w[0] != 0 || w[1] != 8 || w[4] != 1 || w[6] != 8) return false;
-        UINT32 sec2 = 0x18 + w[5];                         // poolBytes
-        if (*(UINT32*)(g_dst + sec2) != 2) return false;
-        blob0 = sec2 + 0x2C + *(UINT32*)(g_dst + sec2 + 4); // heap0 + endptr
-        if (blob0 >= len) return false;
-        blobSize = len - blob0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-
-    // Scan the blob on the 8-byte grid for tagged records.
-    //
-    // Deliberately NOT filtered on the target being outside this container: a
-    // pack.bin offset is often small, and rejecting those threw away perfectly
-    // good references. Ambiguity is resolved where it actually matters -- the
-    // resolver is only consulted for a pointer the loader left NULL, so a record
-    // that really was intra-container (and got bound) is never reached, and a
-    // target that is not a real pack allocation yields no href.
-    const UINT32* p = (const UINT32*)(g_dst + blob0);
-    UINT32 words = blobSize / 4;
-    for (UINT32 i = 0; i + 1 < words && g_n < EXT_CAP; i += 2) {
-        UINT32 k = p[i], v = p[i + 1];
-        if ((k & 7) != 4 || !v) continue;
-        UINT32 slot = (k - 4) >> 1;
-        if ((slot & 3) || slot >= blobSize) continue;
-        g_ext[g_n].slot = slot;
-        g_ext[g_n].target = v;
-        ++g_n;
+bool loadSlice(const char* archivePath, UINT32 offset, UINT32 size)
+{
+    g_n = 0;
+    if (!buffers()) return false;
+    if (!g_ext) {
+        g_ext = (Ext*)VirtualAlloc(nullptr, sizeof(Ext) * EXT_CAP,
+                                   MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!g_ext) return false;
     }
-    qsort(g_ext, g_n, sizeof(Ext), cmpExt);
-    return g_n != 0;
+    return parse(readSlice(archivePath, offset, size));
 }
 
 UINT32 targetFor(UINT32 slot)
