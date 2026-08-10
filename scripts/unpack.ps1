@@ -97,44 +97,75 @@ try {
     Copy-Item -LiteralPath $builtUnpacker -Destination $unpackerDll -Force
     Copy-Item -LiteralPath (Join-Path $root 'config\AllodsUnpacker14.ini') -Destination $unpackerIni -Force
 
-    $ini = foreach ($line in Get-Content -LiteralPath $unpackerIni) {
-        if ($line -match '^OutputDir=') { "OutputDir=$OutputDir" }
-        elseif ($line -match '^Scope=') { "Scope=$Scope" }
-        elseif ($line -match '^Limit=') { "Limit=$Limit" }
-        else { $line }
-    }
-    Set-Content -LiteralPath $unpackerIni -Value $ini -Encoding Ascii
+    $iniTemplate = @(Get-Content -LiteralPath $unpackerIni)
+    $fullRun = ($Limit -eq 0)
+    $remaining = $Limit
+    $skip = 0
+    $batch = 0
 
-    Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
-
-    $process = Start-Process -FilePath $gameExe -WorkingDirectory $gameBin -PassThru
-    $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
-
-    Write-Host 'Waiting for the client database to become ready...'
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
-        if ((Test-Path -LiteralPath $log) -and
-            (Select-String -LiteralPath $log -SimpleMatch 'main thread frozen' -Quiet)) { break }
-        Start-Sleep -Milliseconds 250
-        $process.Refresh()
-    }
-    if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the client freeze.' }
-
-    New-Item -ItemType File -Path $trigger -Force | Out-Null
-    Write-Host 'Extraction started...'
-
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
-        if ((Test-Path -LiteralPath $log) -and
-            (Select-String -LiteralPath $log -SimpleMatch 'ALL DONE' -Quiet)) {
-            Write-Host "Extraction complete: $OutputDir"
-            return
+    while ($true) {
+        ++$batch
+        $batchLimit = if ($fullRun) { 100000 } else { [Math]::Min(100000, $remaining) }
+        $ini = foreach ($line in $iniTemplate) {
+            if ($line -match '^OutputDir=') { "OutputDir=$OutputDir" }
+            elseif ($line -match '^Scope=') { "Scope=$Scope" }
+            elseif ($line -match '^Limit=') { "Limit=$batchLimit" }
+            elseif ($line -match '^Skip=') { "Skip=$skip" }
+            else { $line }
         }
-        Start-Sleep -Seconds 1
-        $process.Refresh()
+        Set-Content -LiteralPath $unpackerIni -Value $ini -Encoding Ascii
+
+        Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+
+        $process = Start-Process -FilePath $gameExe -WorkingDirectory $gameBin -PassThru
+        $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
+
+        Write-Host "Waiting for client database (batch $batch)..."
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
+            if ((Test-Path -LiteralPath $log) -and
+                (Select-String -LiteralPath $log -SimpleMatch 'main thread frozen' -Quiet)) { break }
+            Start-Sleep -Milliseconds 250
+            $process.Refresh()
+        }
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the client freeze.' }
+
+        New-Item -ItemType File -Path $trigger -Force | Out-Null
+        Write-Host "Extraction batch $batch started (skip $skip, limit $batchLimit)..."
+
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
+            if ((Test-Path -LiteralPath $log) -and
+                (Select-String -LiteralPath $log -SimpleMatch 'ALL DONE' -Quiet)) { break }
+            Start-Sleep -Seconds 1
+            $process.Refresh()
+        }
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for extraction to complete.' }
+
+        $done = @(Select-String -LiteralPath $log -Pattern ' done selected=(\d+)' -AllMatches)
+        $more = $false
+        foreach ($line in $done) {
+            Write-Host "Batch $batch summary: $($line.Line.Trim())"
+            foreach ($match in $line.Matches) {
+                if ([int]$match.Groups[1].Value -ge $batchLimit) { $more = $true }
+            }
+        }
+        if (-not $more) { break }
+        if (-not $fullRun) {
+            $remaining -= $batchLimit
+            if ($remaining -le 0) { break }
+        }
+
+        Write-Host "Extraction batch $batch complete. Restarting the client..."
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $process.WaitForExit(5000) | Out-Null
+        }
+        $process = $null
+        $skip += $batchLimit
     }
-    throw 'Timed out waiting for extraction to complete.'
+    Write-Host "Extraction complete: $OutputDir"
 }
 finally {
     if ($process -and -not $process.HasExited) {

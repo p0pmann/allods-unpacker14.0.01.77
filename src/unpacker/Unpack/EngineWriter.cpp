@@ -30,7 +30,9 @@ namespace {
 
 const char* XML_DECL = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>";
 
-char   g_doc[8u * 1024 * 1024];
+// The three material template databases render to more than 8 MiB. Match the
+// sink ceiling so finalization cannot truncate a document the serializer built.
+char   g_doc[64u * 1024 * 1024];
 UINT32 g_docLen = 0;
 UINT32 g_docEmpty = 0;      // unresolved hrefs in the document just built
 char   g_curPath[512];
@@ -419,7 +421,7 @@ namespace EngineWriter {
 const char* currentPath() { return g_curPath; }
 
 // Serialize every resource of the container PackReader currently has open.
-UINT32 runContainer(const char* label, UINT32 limit)
+UINT32 runContainer(const char* label, UINT32 skip, UINT32 limit)
 {
     if (!Pack::count()) { Log::write("EngineWriter: %s is empty", label); return 0; }
     // Hrefs are best-effort; a container still extracts without them.
@@ -433,12 +435,14 @@ UINT32 runContainer(const char* label, UINT32 limit)
     volatile UINT32 total = Pack::count();
     Log::write("EngineWriter: %s -> %u resources", label, total);
 
-    volatile UINT32 selected = 0, written = 0, noType = 0, empty = 0, failed = 0, kept = 0;
+    volatile UINT32 matched = 0, selected = 0, written = 0;
+    volatile UINT32 noType = 0, empty = 0, failed = 0, kept = 0;
     for (volatile UINT32 i = 0; i < total; ++i) {
         const Pack::Res* r = Pack::at(i);
         if (!r) break;                               // index can never run past the table
         const char* path = Pack::path(*r);
         if (!pathMatchesScope(path)) continue;
+        if (matched++ < skip) continue;
         if (limit && selected >= limit) break;
         bool trace = (selected < 5) && g_traceFirst;
         ++selected;
@@ -475,12 +479,13 @@ UINT32 runContainer(const char* label, UINT32 limit)
     return written;
 }
 
-void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* scope)
+void runAll(const char* outDir, UINT32 skip, UINT32 limit, const char* onlyMap, const char* scope)
 {
     lstrcpynA(g_onlyMap, onlyMap ? onlyMap : "", sizeof(g_onlyMap));
     if (g_onlyMap[0]) Log::write("EngineWriter: OnlyMap=%s", g_onlyMap);
     setScopeFilter(scope);
     if (g_scope[0]) Log::write("EngineWriter: Scope=%s", g_scope);
+    if (skip) Log::write("EngineWriter: Skip=%u", skip);
     if (!Pack::open() || !Types::init() || !SlotMap::init() || !Sink::init()) {
         Log::write("EngineWriter: prerequisites missing, nothing written");
         return;
@@ -489,7 +494,7 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
     if (!Fs::setRoot(outDir)) { Log::write("EngineWriter: cannot create %s", outDir); return; }
 
     HrefMap::setContainerBase(Pack::blobBase(), true);
-    volatile UINT32 total = runContainer("pack.bin", limit);
+    volatile UINT32 total = runContainer("pack.bin", skip, limit);
 
     // Per-map databases are not mounted at the freeze -- mount each in turn and
     // run the same pipeline over it. Installing one only drops a single
@@ -533,7 +538,7 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
         // The loader drops the fixup stream, so re-read it from the file to
         // recover references into pack.bin that were never bound.
         Fixups::load(full);
-        total += runContainer(names[i], limit);
+        total += runContainer(names[i], skip, limit);
         ++maps;
     }
     Log::write("EngineWriter: all databases processed");
