@@ -25,19 +25,53 @@ $log = Join-Path $gameBin 'AllodsUnpacker14.log'
 $process = $null
 $installedCarrier = $false
 
+function Invoke-UnpackerBuild {
+    $nmake = Get-Command 'nmake.exe' -ErrorAction SilentlyContinue
+    if ($nmake) {
+        Push-Location $root
+        try {
+            & $nmake.Source /nologo /f Makefile
+            if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE." }
+        }
+        finally { Pop-Location }
+        return
+    }
+
+    $vcvars = $null
+    $installRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+    foreach ($installRoot in $installRoots) {
+        foreach ($version in @('18', '2022', '2019', '2017')) {
+            foreach ($edition in @('Community', 'Professional', 'Enterprise', 'BuildTools')) {
+                $candidate = Join-Path $installRoot "Microsoft Visual Studio\$version\$edition\VC\Auxiliary\Build\vcvarsall.bat"
+                if (Test-Path -LiteralPath $candidate) { $vcvars = $candidate; break }
+            }
+            if ($vcvars) { break }
+        }
+        if ($vcvars) { break }
+    }
+    if (-not $vcvars) { throw 'An MSVC installation with the x86 toolchain was not found.' }
+
+    Push-Location $root
+    try {
+        $command = 'call "{0}" x64_x86 >nul && nmake /nologo /f Makefile' -f $vcvars
+        & $env:ComSpec /d /s /c $command
+        if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE." }
+    }
+    finally { Pop-Location }
+}
+
 if (-not (Test-Path -LiteralPath $gameExe -PathType Leaf)) {
     throw "AOgame.exe was not found at '$gameExe'."
 }
 
 if (-not $NoBuild) {
-    & (Join-Path $root 'build.cmd')
-    if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE." }
+    Invoke-UnpackerBuild
 }
 
 $builtCarrier = Join-Path $root 'build\pango.dll'
 $builtUnpacker = Join-Path $root 'build\AllodsUnpacker14.dll'
 if (-not (Test-Path -LiteralPath $builtCarrier) -or -not (Test-Path -LiteralPath $builtUnpacker)) {
-    throw 'Build artifacts are missing. Run build.cmd first or omit -NoBuild.'
+    throw 'Build artifacts are missing. Run nmake first or omit -NoBuild.'
 }
 
 try {

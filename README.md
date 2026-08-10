@@ -43,10 +43,10 @@ For a quick smoke run:
 .\scripts\unpack.ps1 -ClientDir 'E:\allods\clients\14.1' -Limit 100
 ```
 
-Build without deploying:
+Build without deploying from an x86 MSVC developer prompt:
 
-```cmd
-build.cmd
+```powershell
+nmake
 ```
 
 Outputs are placed in `build\`.

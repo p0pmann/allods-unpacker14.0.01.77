@@ -3,7 +3,7 @@
 !/.gitignore
 !/.gitattributes
 !/README.md
-!/build.cmd
+!/Makefile
 !/config/
 !/config/**
 !/scripts/
