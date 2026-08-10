@@ -38,19 +38,19 @@ All engine addresses in `src/unpacker/Offsets.h` are specific to 14.0.01.77.
 From PowerShell:
 
 ```powershell
-.\scripts\unpack.ps1 -ClientDir '<client-directory>'
+.\scripts\unpack.ps1 -ClientDir '<client-directory>' -OutputDir '<output-directory>'
 ```
 
 The harness builds both DLLs, replaces `bin\pango.dll` temporarily, launches
 `AOgame.exe`, waits for the unpacker freeze, creates the `WRITE_NOW` trigger,
-and waits for completion. Extracted `.xdb` files are written under
-`<client>\bin\data`. The launched client is stopped and the original carrier is
-restored when the run finishes or fails.
+and waits for completion. Extracted `.xdb` files are written to the mandatory
+absolute `-OutputDir`. The launched client is stopped and the original carrier
+is restored when the run finishes or fails.
 
 For a quick smoke run:
 
 ```powershell
-.\scripts\unpack.ps1 -ClientDir '<client-directory>' -Limit 100
+.\scripts\unpack.ps1 -ClientDir '<client-directory>' -OutputDir '<output-directory>' -Limit 100
 ```
 
 Build without deploying from an x86 MSVC developer prompt:
@@ -60,6 +60,9 @@ nmake
 ```
 
 Outputs are placed in `build\`.
+
+When deploying manually, set the required absolute `OutputDir` value in
+`AllodsUnpacker14.ini`; extraction will not start when it is empty.
 
 ## Notes
 

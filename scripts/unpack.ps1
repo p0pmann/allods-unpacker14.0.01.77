@@ -3,6 +3,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ClientDir,
 
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$OutputDir,
+
     [ValidateRange(0, [int]::MaxValue)]
     [int]$Limit = 0,
 
@@ -14,6 +18,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+$OutputDir = [IO.Path]::GetFullPath($OutputDir)
 $gameBin = Join-Path $ClientDir 'bin'
 $gameExe = Join-Path $gameBin 'AOgame.exe'
 $stockCarrier = Join-Path $gameBin 'pango.dll'
@@ -87,8 +92,11 @@ try {
     Copy-Item -LiteralPath $builtUnpacker -Destination $unpackerDll -Force
     Copy-Item -LiteralPath (Join-Path $root 'config\AllodsUnpacker14.ini') -Destination $unpackerIni -Force
 
-    $ini = Get-Content -LiteralPath $unpackerIni -Raw
-    $ini = $ini -replace '(?m)^Limit=.*$', "Limit=$Limit"
+    $ini = foreach ($line in Get-Content -LiteralPath $unpackerIni) {
+        if ($line -match '^OutputDir=') { "OutputDir=$OutputDir" }
+        elseif ($line -match '^Limit=') { "Limit=$Limit" }
+        else { $line }
+    }
     Set-Content -LiteralPath $unpackerIni -Value $ini -Encoding Ascii
 
     Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
@@ -114,7 +122,7 @@ try {
         if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
         if ((Test-Path -LiteralPath $log) -and
             (Select-String -LiteralPath $log -SimpleMatch 'ALL DONE' -Quiet)) {
-            Write-Host "Extraction complete: $(Join-Path $gameBin 'data')"
+            Write-Host "Extraction complete: $OutputDir"
             return
         }
         Start-Sleep -Seconds 1

@@ -12,7 +12,8 @@
 //      clock spoofed. At that point the ENTIRE resource corpus is already mapped
 //      and pointer-fixed-up -- no login, server or world load is required.
 //   3. On a WRITE_NOW sentinel, EngineWriter::runAll walks the pack's own heap
-//      directory and serializes every resource through the engine into xdb/.
+//      directory and serializes every resource through the engine into the
+//      configured output directory.
 //   4. HrefWriter makes the engine emit resource hrefs too (its ref serializers
 //      only implement the read path).
 //
@@ -26,6 +27,7 @@ namespace {
 
 char g_binDir[MAX_PATH];
 char g_iniPath[MAX_PATH];
+char g_outputDir[MAX_PATH];
 int  g_freezeStep = 1;
 
 void loadPaths()
@@ -44,9 +46,8 @@ int cfg(const char* key, int def)
 
 DWORD WINAPI worker(LPVOID)
 {
-    char sentinel[MAX_PATH], outDir[MAX_PATH], onlyMap[64] = { 0 };
+    char sentinel[MAX_PATH], onlyMap[64] = { 0 };
     wsprintfA(sentinel, "%s\\WRITE_NOW", g_binDir);
-    wsprintfA(outDir,   "%s\\data",      g_binDir);
     // OnlyMap=<substring>: mount just the databases whose file name matches.
     GetPrivateProfileStringA("unpacker", "OnlyMap", "", onlyMap, sizeof(onlyMap), g_iniPath);
 
@@ -59,7 +60,7 @@ DWORD WINAPI worker(LPVOID)
     Sleep(200);
 
     HrefWriter::install();
-    EngineWriter::runAll(outDir, (UINT32)cfg("Limit", 0), onlyMap);
+    EngineWriter::runAll(g_outputDir, (UINT32)cfg("Limit", 0), onlyMap);
     return 0;
 }
 
@@ -69,11 +70,18 @@ DWORD WINAPI init(LPVOID)
     Log::init(g_binDir);
     Log::write("======== AllodsUnpacker14 attached (pid=%lu) ========", GetCurrentProcessId());
 
+    GetPrivateProfileStringA("unpacker", "OutputDir", "", g_outputDir,
+                             sizeof(g_outputDir), g_iniPath);
+    if (!g_outputDir[0]) {
+        Log::write("config error: OutputDir is required (%s)", g_iniPath);
+        return 0;
+    }
+
     if (!Hooks::init()) { Log::write("MinHook init FAILED"); return 0; }
 
     g_freezeStep = cfg("FreezeStep", 1);
-    Log::write("config: FreezeStep=%d Extract=%d (%s)",
-               g_freezeStep, cfg("Extract", 1), g_iniPath);
+    Log::write("config: FreezeStep=%d Extract=%d OutputDir=%s (%s)",
+               g_freezeStep, cfg("Extract", 1), g_outputDir, g_iniPath);
     if (g_freezeStep > 0) Freeze::install(g_freezeStep);
     if (cfg("Extract", 1)) CloseHandle(CreateThread(nullptr, 0, worker, nullptr, 0, nullptr));
     return 0;
