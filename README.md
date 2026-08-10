@@ -53,6 +53,17 @@ For a quick smoke run:
 .\scripts\unpack.ps1 -ClientDir '<client-directory>' -OutputDir '<output-directory>' -Limit 100
 ```
 
+To unpack only one resource folder, pass `-Scope` at any depth. A trailing
+slash is optional and either slash style is accepted:
+
+```powershell
+.\scripts\unpack.ps1 -ClientDir '<client-directory>' -OutputDir '<output-directory>' -Scope 'Mechanics\Classes'
+.\scripts\unpack.ps1 -ClientDir '<client-directory>' -OutputDir '<output-directory>' -Scope 'Interface\'
+```
+
+The filter observes directory boundaries, so `Mechanics` matches everything
+under `Mechanics\` without also matching similarly named sibling folders.
+
 Build without deploying from an x86 MSVC developer prompt:
 
 ```powershell

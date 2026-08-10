@@ -82,7 +82,8 @@ int  slotFor(UINT32 vtable);      // serializer slot, clamped to VTABLE_MAX_SLOT
 
 namespace EngineWriter {
 // Serialize every resource of every database through the engine into outDir.
-void        runAll(const char* outDir, UINT32 limit, const char* onlyMap);
+void        runAll(const char* outDir, UINT32 limit, const char* onlyMap,
+                   const char* scope);
 const char* currentPath();        // resource being written, for relative hrefs
 }
 

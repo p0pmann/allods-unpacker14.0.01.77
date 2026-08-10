@@ -7,6 +7,9 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$OutputDir,
 
+    [ValidateScript({ $_ -notmatch '[\r\n]' })]
+    [string]$Scope = '',
+
     [ValidateRange(0, [int]::MaxValue)]
     [int]$Limit = 0,
 
@@ -94,6 +97,7 @@ try {
 
     $ini = foreach ($line in Get-Content -LiteralPath $unpackerIni) {
         if ($line -match '^OutputDir=') { "OutputDir=$OutputDir" }
+        elseif ($line -match '^Scope=') { "Scope=$Scope" }
         elseif ($line -match '^Limit=') { "Limit=$Limit" }
         else { $line }
     }

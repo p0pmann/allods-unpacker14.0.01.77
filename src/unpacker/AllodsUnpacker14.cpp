@@ -46,10 +46,11 @@ int cfg(const char* key, int def)
 
 DWORD WINAPI worker(LPVOID)
 {
-    char sentinel[MAX_PATH], onlyMap[64] = { 0 };
+    char sentinel[MAX_PATH], onlyMap[64] = { 0 }, scope[512] = { 0 };
     wsprintfA(sentinel, "%s\\WRITE_NOW", g_binDir);
     // OnlyMap=<substring>: mount just the databases whose file name matches.
     GetPrivateProfileStringA("unpacker", "OnlyMap", "", onlyMap, sizeof(onlyMap), g_iniPath);
+    GetPrivateProfileStringA("unpacker", "Scope", "", scope, sizeof(scope), g_iniPath);
 
     // FreezeStep=0 means something else already froze the client (the launch
     // patch payload does, and two hooks on the same app-step slot would fight).
@@ -60,7 +61,7 @@ DWORD WINAPI worker(LPVOID)
     Sleep(200);
 
     HrefWriter::install();
-    EngineWriter::runAll(g_outputDir, (UINT32)cfg("Limit", 0), onlyMap);
+    EngineWriter::runAll(g_outputDir, (UINT32)cfg("Limit", 0), onlyMap, scope);
     return 0;
 }
 

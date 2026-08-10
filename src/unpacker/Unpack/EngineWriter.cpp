@@ -36,7 +36,39 @@ UINT32 g_docEmpty = 0;      // unresolved hrefs in the document just built
 char   g_curPath[512];
 bool   g_traceFirst = true;      // detail-log the first few of the first container
 char   g_onlyMap[64];            // OnlyMap=<substring>: mount just that database
+char   g_scope[512];              // normalized resource directory prefix, ending '/'
 const UINT32 MAX_MAPS = 1024;
+
+void setScopeFilter(const char* scope)
+{
+    g_scope[0] = 0;
+    if (!scope) return;
+
+    while (*scope == '/' || *scope == '\\') ++scope;
+    UINT32 n = 0;
+    while (*scope && n < sizeof(g_scope) - 2) {
+        char c = *scope++;
+        if (c == '\\') c = '/';
+        if (c == '/' && (n == 0 || g_scope[n - 1] == '/')) continue;
+        g_scope[n++] = c;
+    }
+    while (n && g_scope[n - 1] == '/') --n;
+    if (n) g_scope[n++] = '/';
+    g_scope[n] = 0;
+}
+
+bool pathMatchesScope(const char* path)
+{
+    if (!g_scope[0]) return true;
+    while (*path == '/' || *path == '\\') ++path;
+    for (UINT32 i = 0; g_scope[i]; ++i) {
+        char c = path[i];
+        if (!c) return false;
+        if (c == '\\') c = '/';
+        if (tolower((unsigned char)c) != tolower((unsigned char)g_scope[i])) return false;
+    }
+    return true;
+}
 
 // The same resource is embedded in many databases, and the copies differ: one
 // container may record a cross-container reference that another leaves out. The
@@ -399,15 +431,17 @@ UINT32 runContainer(const char* label, UINT32 limit)
     // turned the loop counter into a random small number and made the pass run
     // forever. Keeping the state in memory costs nothing measurable here.
     volatile UINT32 total = Pack::count();
-    if (limit && limit < total) total = limit;
     Log::write("EngineWriter: %s -> %u resources", label, total);
 
-    volatile UINT32 written = 0, noType = 0, empty = 0, failed = 0, kept = 0;
+    volatile UINT32 selected = 0, written = 0, noType = 0, empty = 0, failed = 0, kept = 0;
     for (volatile UINT32 i = 0; i < total; ++i) {
-        bool trace = (i < 5) && g_traceFirst;
         const Pack::Res* r = Pack::at(i);
         if (!r) break;                               // index can never run past the table
         const char* path = Pack::path(*r);
+        if (!pathMatchesScope(path)) continue;
+        if (limit && selected >= limit) break;
+        bool trace = (selected < 5) && g_traceFirst;
+        ++selected;
         UINT32 objAddr = Pack::blobBase() + r->blobOff;
 
         UINT32 vt = 0;
@@ -434,16 +468,19 @@ UINT32 runContainer(const char* label, UINT32 limit)
         if (written && (written % 25000) == 0)
             Log::write("EngineWriter: %u written (at %u/%u)", written, i, total);
     }
-    Log::write("EngineWriter: %s done written=%u noType=%u empty=%u failed=%u keptBetter=%u",
-               label, (UINT32)written, (UINT32)noType, (UINT32)empty, (UINT32)failed, (UINT32)kept);
+    Log::write("EngineWriter: %s done selected=%u written=%u noType=%u empty=%u failed=%u keptBetter=%u",
+               label, (UINT32)selected, (UINT32)written, (UINT32)noType,
+               (UINT32)empty, (UINT32)failed, (UINT32)kept);
     g_traceFirst = false;
     return written;
 }
 
-void runAll(const char* outDir, UINT32 limit, const char* onlyMap)
+void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* scope)
 {
     lstrcpynA(g_onlyMap, onlyMap ? onlyMap : "", sizeof(g_onlyMap));
     if (g_onlyMap[0]) Log::write("EngineWriter: OnlyMap=%s", g_onlyMap);
+    setScopeFilter(scope);
+    if (g_scope[0]) Log::write("EngineWriter: Scope=%s", g_scope);
     if (!Pack::open() || !Types::init() || !SlotMap::init() || !Sink::init()) {
         Log::write("EngineWriter: prerequisites missing, nothing written");
         return;
