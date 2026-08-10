@@ -61,8 +61,7 @@ DWORD WINAPI worker(LPVOID)
     Sleep(200);
 
     HrefWriter::install();
-    EngineWriter::runAll(g_outputDir, (UINT32)cfg("Skip", 0),
-                         (UINT32)cfg("Limit", 0), onlyMap, scope);
+    EngineWriter::runAll(g_outputDir, (UINT32)cfg("Limit", 0), onlyMap, scope);
     return 0;
 }
 

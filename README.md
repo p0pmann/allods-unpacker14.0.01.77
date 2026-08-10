@@ -43,10 +43,9 @@ From PowerShell:
 
 The harness builds both DLLs, replaces `bin\pango.dll` temporarily, launches
 `AOgame.exe`, waits for the unpacker freeze, creates the `WRITE_NOW` trigger,
-and waits for completion. Large runs are split into safe client batches
-automatically. Extracted `.xdb` files are written to the mandatory absolute
-`-OutputDir`. The launched client is stopped and the original carrier is
-restored when the run finishes or fails.
+and waits for completion. Extracted `.xdb` files are written to the mandatory
+absolute `-OutputDir`. The launched client is stopped and the original carrier
+is restored when the run finishes or fails.
 
 For a quick smoke run:
 
