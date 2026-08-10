@@ -1,4 +1,4 @@
-// Unpack/MapLoader.cpp -- mount Maps_*.bin directly from installed .pak files.
+// Unpack/MapLoader.cpp -- discover resource databases in installed .pak files.
 //
 // The installed client keeps its per-map databases as stored ZIP entries under
 // data/Packs. Archive names are discovered at runtime. The client VFS can mount
@@ -41,6 +41,15 @@ bool endsWithI(const char* s, const char* suffix)
     return a >= b && startsWithI(s + a - b, suffix);
 }
 
+bool equalsI(const char* a, const char* b)
+{
+    while (*a && *b) {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+        ++a; ++b;
+    }
+    return *a == *b;
+}
+
 } // namespace
 
 namespace MapLoader {
@@ -72,8 +81,8 @@ bool dataRoot(char* out, UINT32 cch)
     return false;
 }
 
-UINT32 enumerateArchive(const char* archive, Database* out, UINT32 cap,
-                        const char* nameFilter)
+UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
+                        UINT32 mapCap, const char* mapNameFilter)
 {
     HANDLE h = CreateFileA(archive, GENERIC_READ, FILE_SHARE_READ, nullptr,
                            OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
@@ -116,19 +125,25 @@ UINT32 enumerateArchive(const char* archive, Database* out, UINT32 cap,
         UINT32 copy = nameLen < sizeof(name) - 1 ? nameLen : sizeof(name) - 1;
         memcpy(name, c + 46, copy); name[copy] = 0;
         for (char* p = name; *p; ++p) if (*p == '\\') *p = '/';
-        if (nameLen < sizeof(name) && method == 0 && disk == 0 && compSize == rawSize &&
-            startsWithI(name, "Bin/Maps_") && endsWithI(name, ".bin") &&
-            (!nameFilter || !*nameFilter || strstr(name, nameFilter))) {
+        bool isPack = nameLen < sizeof(name) && equalsI(name, "Bin/pack.bin");
+        bool isMap = nameLen < sizeof(name) && startsWithI(name, "Bin/Maps_") &&
+                     endsWithI(name, ".bin") &&
+                     (!mapNameFilter || !*mapNameFilter || strstr(name, mapNameFilter));
+        if (method == 0 && disk == 0 && compSize == rawSize && (isPack || isMap)) {
             BYTE local[30];
             if (localAt <= fileSize - sizeof(local) && readAt(h, localAt, local, sizeof(local)) &&
                 u32(local) == 0x04034B50) {
                 UINT32 dataAt = localAt + 30u + u16(local + 26) + u16(local + 28);
-                if (dataAt <= fileSize && compSize <= fileSize - dataAt && found < cap) {
-                    lstrcpynA(out[found].archive, archive, MAX_PATH);
-                    lstrcpynA(out[found].path, name, sizeof(out[found].path));
-                    out[found].offset = dataAt;
-                    out[found].size = compSize;
-                    ++found;
+                if (dataAt <= fileSize && compSize <= fileSize - dataAt) {
+                    Database* dst = nullptr;
+                    if (isPack && !pack->path[0]) dst = pack;
+                    else if (isMap && found < mapCap) dst = &maps[found++];
+                    if (dst) {
+                        lstrcpynA(dst->archive, archive, MAX_PATH);
+                        lstrcpynA(dst->path, name, sizeof(dst->path));
+                        dst->offset = dataAt;
+                        dst->size = compSize;
+                    }
                 }
             }
         }
@@ -139,8 +154,10 @@ UINT32 enumerateArchive(const char* archive, Database* out, UINT32 cap,
     return found;
 }
 
-UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter)
+UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
+                 const char* mapNameFilter)
 {
+    memset(pack, 0, sizeof(*pack));
     char root[MAX_PATH];
     if (!dataRoot(root, MAX_PATH)) return 0;
 
@@ -159,10 +176,12 @@ UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter)
         char archive[MAX_PATH];
         wsprintfA(archive, "%sPacks\\%s", root, fd.cFileName);
         ++archives;
-        found += enumerateArchive(archive, out + found, cap - found, nameFilter);
-    } while (found < cap && FindNextFileA(find, &fd));
+        found += enumerateArchive(archive, pack, maps + found,
+                                  mapCap - found, mapNameFilter);
+    } while (FindNextFileA(find, &fd));
     FindClose(find);
-    Log::write("MapLoader: searched %u archives", archives);
+    Log::write("MapLoader: searched %u archives, pack=%s", archives,
+               pack->path[0] ? pack->path : "not found");
     return found;
 }
 

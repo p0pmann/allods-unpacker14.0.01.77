@@ -47,9 +47,10 @@ and waits for completion. Extracted `.xdb` files are written to the mandatory
 absolute `-OutputDir`. The launched client is stopped and the original carrier
 is restored when the run finishes or fails.
 
-The run processes both `pack.bin` and every `Bin/Maps_*.bin` database found at
-runtime inside `data\Packs\*.pak`. Map databases are mounted through the client
-VFS and read in place; they are not copied into `data\Bin`.
+The run discovers `Bin/pack.bin` and every `Bin/Maps_*.bin` database at runtime
+inside `data\Packs\*.pak`. Map databases are mounted through the client VFS and
+all database bytes stay in their owning archives; nothing is copied into
+`data\Bin`.
 
 For a quick smoke run:
 

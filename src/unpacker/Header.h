@@ -102,7 +102,8 @@ struct Database {
     UINT32 size;
 };
 bool dataRoot(char* out, UINT32 cch);      // "<client>\data\"
-UINT32 enumerate(Database* out, UINT32 cap, const char* nameFilter);
+UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
+                 const char* mapNameFilter);
 bool load(const char* virtualPath);
 }
 

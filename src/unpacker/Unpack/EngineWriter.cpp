@@ -490,8 +490,18 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
 
     if (!Fs::setRoot(outDir)) { Log::write("EngineWriter: cannot create %s", outDir); return; }
 
+    // Locate the base and map databases together. Their archive names are an
+    // installation detail and are never assumed by the unpacker.
+    static MapLoader::Database packFound;
+    static MapLoader::Database mapsFound[MAX_MAPS];
+    volatile UINT32 nNames = MapLoader::enumerate(&packFound, mapsFound, MAX_MAPS, g_onlyMap);
+    if (!packFound.path[0]) {
+        Log::write("EngineWriter: Bin/pack.bin was not found in data\\Packs\\*.pak");
+        return;
+    }
+
     HrefMap::setContainerBase(Pack::blobBase(), true);
-    volatile UINT32 total = runContainer("pack.bin");
+    volatile UINT32 total = runContainer(packFound.path + 4); // drop "Bin/"
 
     // Per-map databases are not mounted at the freeze -- mount each in turn and
     // run the same pipeline over it. Installing one only drops a single
@@ -501,8 +511,6 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
     // serializer: an x86 __except does not restore the non-volatile registers
     // the faulting callee used, so a handle the compiler parked in one comes
     // back as garbage and the walk dies silently after the first database.
-    static MapLoader::Database mapsFound[MAX_MAPS];
-    volatile UINT32 nNames = MapLoader::enumerate(mapsFound, MAX_MAPS, g_onlyMap);
     Log::write("EngineWriter: %u map databases to mount", nNames);
 
     volatile UINT32 maps = 0, mapFail = 0;
