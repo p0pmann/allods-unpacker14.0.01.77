@@ -1,0 +1,12 @@
+# This repository intentionally publishes only the minimal unpacker tree.
+*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/build.cmd
+!/config/
+!/config/**
+!/scripts/
+!/scripts/**
+!/src/
+!/src/**
