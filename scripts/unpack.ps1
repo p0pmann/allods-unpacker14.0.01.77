@@ -133,7 +133,7 @@ try {
     else {
         [string[]]$runScopes = @(
             'Account', 'Characters', 'Client', 'Creatures', 'CutScenes',
-            'Interface', 'ItemMall', 'Items', 'Maps', 'Material', 'Mechanics',
+            'Interface', 'ItemMall', 'Items', 'Maps', 'Material', 'Mechanics', 'Mods',
             'SFX', 'Ships', 'Spells', 'System', 'World'
         )
     }

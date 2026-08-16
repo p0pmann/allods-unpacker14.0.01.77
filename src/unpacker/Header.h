@@ -102,10 +102,16 @@ struct Database {
     UINT32 size;
 };
 bool dataRoot(char* out, UINT32 cch);      // "<client>\data\"
-UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
+UINT32 enumerate(Database* pack, Database* loc, Database* maps, UINT32 mapCap,
                  const char* mapNameFilter);
 bool hasPayload(const char* relativePath); // payload path found inside a .pak
 bool load(const char* virtualPath);
+}
+
+namespace LocWriter {
+// Inflate Bin/pack.loc and publish every declared localization value as the
+// sibling .txt resource referenced by the generated XDB files.
+UINT32 run(const MapLoader::Database& loc, UINT32 limit, const char* scope);
 }
 
 namespace HrefWriter {

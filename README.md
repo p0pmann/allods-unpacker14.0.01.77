@@ -18,8 +18,9 @@ The repository contains only three pieces:
 - `src/carrier`: a `pango.dll` proxy that forwards all 397 exports to the stock
   `pango_orig.dll` and loads `AllodsUnpacker14.dll` during process startup.
 - `src/unpacker`: the custom DLL. It freezes the client after its resource
-  database is mapped, walks the live containers, and calls the client's own XDB
-  serializer.
+  database is mapped, walks the live containers, calls the client's own XDB
+  serializer, and expands the compiled localization database into sibling
+  `.txt` resources.
 - `scripts/unpack.ps1`: builds, deploys, launches, triggers extraction, waits for
   completion, and restores the stock carrier.
 
@@ -43,18 +44,18 @@ From PowerShell:
 
 The harness builds both DLLs, replaces `bin\pango.dll` temporarily, launches
 `AOgame.exe`, waits for the unpacker freeze, creates the `WRITE_NOW` trigger,
-and waits for completion. Extracted `.xdb` files are written to the mandatory
-absolute `-OutputDir`. The launched client is stopped and the original carrier
-is restored when the run finishes or fails.
+and waits for completion. Extracted `.xdb` and localized `.txt` files are
+written to the mandatory absolute `-OutputDir`. The launched client is stopped
+and the original carrier is restored when the run finishes or fails.
 
 For reliable Direct3D 9 initialization in Remote Desktop sessions, the harness
 temporarily changes `Personal\Global.cfg` from exclusive fullscreen to windowed
 mode. The original configuration bytes are restored after success or failure.
 
-The run discovers `Bin/pack.bin` and every `Bin/Maps_*.bin` database at runtime
-inside `data\Packs\*.pak`. Map databases are mounted through the client VFS and
-all database bytes stay in their owning archives; nothing is copied into
-`data\Bin`.
+The run discovers `Bin/pack.bin`, `Bin/pack.loc`, and every `Bin/Maps_*.bin`
+database at runtime inside `data\Packs\*.pak`. Map databases are mounted through
+the client VFS and all database bytes stay in their owning archives; nothing is
+copied into `data\Bin`.
 
 A full run automatically divides extraction by top-level resource directory and
 starts a fresh 32-bit client for each scope. This avoids cumulative serializer
@@ -96,6 +97,8 @@ When deploying manually, set the required absolute `OutputDir` value in
   and the installed `.pak` central directories. Fields whose exact `.bin` or
   `.hi.bin` payload is absent are omitted, so clean-client extraction produces
   complete links without inventing references for payload-less resources.
+- Every `pack.loc` record is emitted at its declared `.txt` path as UTF-16LE
+  with a BOM, matching the on-disk format consumed by the client.
 - MinHook is vendored under `src/unpacker/Hooks/minhook` under its BSD-2-Clause
   license.
 

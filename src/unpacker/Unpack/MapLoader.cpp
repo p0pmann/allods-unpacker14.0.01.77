@@ -109,8 +109,8 @@ bool dataRoot(char* out, UINT32 cch)
     return false;
 }
 
-UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
-                        UINT32 mapCap, const char* mapNameFilter)
+UINT32 enumerateArchive(const char* archive, Database* pack, Database* loc,
+                        Database* maps, UINT32 mapCap, const char* mapNameFilter)
 {
     HANDLE h = CreateFileA(archive, GENERIC_READ, FILE_SHARE_READ, nullptr,
                            OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, nullptr);
@@ -154,12 +154,13 @@ UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
         memcpy(name, c + 46, copy); name[copy] = 0;
         for (char* p = name; *p; ++p) if (*p == '\\') *p = '/';
         bool isPack = nameLen < sizeof(name) && equalsI(name, "Bin/pack.bin");
+        bool isLoc = nameLen < sizeof(name) && equalsI(name, "Bin/pack.loc");
         bool isMap = nameLen < sizeof(name) && startsWithI(name, "Bin/Maps_") &&
                      endsWithI(name, ".bin") &&
                      (!mapNameFilter || !*mapNameFilter || strstr(name, mapNameFilter));
         if (bytesEndWithI((const char*)c + 46, nameLen, ".bin"))
             g_payloadEntries.push_back(normalizedPath((const char*)c + 46, nameLen));
-        if (method == 0 && disk == 0 && compSize == rawSize && (isPack || isMap)) {
+        if (method == 0 && disk == 0 && compSize == rawSize && (isPack || isLoc || isMap)) {
             BYTE local[30];
             if (localAt <= fileSize - sizeof(local) && readAt(h, localAt, local, sizeof(local)) &&
                 u32(local) == 0x04034B50) {
@@ -167,6 +168,7 @@ UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
                 if (dataAt <= fileSize && compSize <= fileSize - dataAt) {
                     Database* dst = nullptr;
                     if (isPack && !pack->path[0]) dst = pack;
+                    else if (isLoc && !loc->path[0]) dst = loc;
                     else if (isMap && found < mapCap) dst = &maps[found++];
                     if (dst) {
                         lstrcpynA(dst->archive, archive, MAX_PATH);
@@ -184,10 +186,11 @@ UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
     return found;
 }
 
-UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
+UINT32 enumerate(Database* pack, Database* loc, Database* maps, UINT32 mapCap,
                  const char* mapNameFilter)
 {
     memset(pack, 0, sizeof(*pack));
+    memset(loc, 0, sizeof(*loc));
     g_payloadEntries.clear();
     char root[MAX_PATH];
     if (!dataRoot(root, MAX_PATH)) return 0;
@@ -207,15 +210,16 @@ UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
         char archive[MAX_PATH];
         wsprintfA(archive, "%sPacks\\%s", root, fd.cFileName);
         ++archives;
-        found += enumerateArchive(archive, pack, maps + found,
+        found += enumerateArchive(archive, pack, loc, maps + found,
                                   mapCap - found, mapNameFilter);
     } while (FindNextFileA(find, &fd));
     FindClose(find);
     std::sort(g_payloadEntries.begin(), g_payloadEntries.end());
     g_payloadEntries.erase(std::unique(g_payloadEntries.begin(), g_payloadEntries.end()),
                            g_payloadEntries.end());
-    Log::write("MapLoader: searched %u archives, pack=%s, payloads=%u", archives,
+    Log::write("MapLoader: searched %u archives, pack=%s, loc=%s, payloads=%u", archives,
                pack->path[0] ? pack->path : "not found",
+               loc->path[0] ? loc->path : "not found",
                (UINT32)g_payloadEntries.size());
     return found;
 }

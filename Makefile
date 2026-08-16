@@ -21,6 +21,7 @@ UNPACKER_SOURCES= \
     $(UNPACKER)\Tools\Log.cpp \
     $(UNPACKER)\Unpack\EngineWriter.cpp \
     $(UNPACKER)\Unpack\HrefWriter.cpp \
+    $(UNPACKER)\Unpack\LocWriter.cpp \
     $(UNPACKER)\Unpack\MapLoader.cpp \
     $(UNPACKER)\Unpack\Sink.cpp
 

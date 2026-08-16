@@ -538,14 +538,19 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
     // Locate the base and map databases together. Their archive names are an
     // installation detail and are never assumed by the unpacker.
     static MapLoader::Database packFound;
+    static MapLoader::Database locFound;
     static MapLoader::Database mapsFound[MAX_MAPS];
-    volatile UINT32 nNames = MapLoader::enumerate(&packFound, mapsFound, MAX_MAPS, g_onlyMap);
+    volatile UINT32 nNames = MapLoader::enumerate(&packFound, &locFound, mapsFound,
+                                                   MAX_MAPS, g_onlyMap);
     if (!packFound.path[0]) {
         Log::write("EngineWriter: Bin/pack.bin was not found in data\\Packs\\*.pak");
         return;
     }
 
     HrefMap::setContainerBase(Pack::blobBase(), true);
+    volatile UINT32 texts = locFound.path[0]
+        ? LocWriter::run(locFound, g_limit, g_scope) : 0;
+    if (!locFound.path[0]) Log::write("LocWriter: Bin/pack.loc was not found in data\\Packs\\*.pak");
     volatile UINT32 total = runContainer(packFound.path + 4); // drop "Bin/"
 
     // Per-map databases are not mounted at the freeze -- mount each in turn and
@@ -578,7 +583,7 @@ void runAll(const char* outDir, UINT32 limit, const char* onlyMap, const char* s
     // Copy out of the volatiles before logging: reading them through varargs was
     // the last thing this function did, and it never got there.
     UINT32 f = total, m = maps, mf = mapFail;
-    Log::write("EngineWriter: ALL DONE files=%u maps=%u mapFail=%u", f, m, mf);
+    Log::write("EngineWriter: ALL DONE files=%u texts=%u maps=%u mapFail=%u", f, texts, m, mf);
     Log::write("EngineWriter: hrefs=%u refFaults=%u unresolved=%u external=%u",
                HrefWriter::written(), HrefWriter::faults(),
                HrefWriter::unresolved(), HrefWriter::external());
