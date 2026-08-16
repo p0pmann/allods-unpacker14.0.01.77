@@ -3,15 +3,21 @@
 // The installed client keeps its per-map databases as stored ZIP entries under
 // data/Packs. Archive names are discovered at runtime. The client VFS can mount
 // entries by their virtual Bin/... name. We parse only the ZIP directories so
-// Fixups can read the same bytes in place; nothing is copied into data/Bin.
+// Fixups can read the same bytes in place and EngineWriter can resolve optional
+// payloads without extracting them first; nothing is copied into data/Bin.
 #include "../Header.h"
 
 #include <cctype>
 #include <cstring>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 namespace {
 
 typedef char (__cdecl* LoadDbFn)(GameStr*, GameStr*);
+
+std::vector<std::string> g_payloadEntries;
 
 UINT16 u16(const BYTE* p) { return (UINT16)(p[0] | (p[1] << 8)); }
 UINT32 u32(const BYTE* p) { return (UINT32)p[0] | ((UINT32)p[1] << 8) |
@@ -41,6 +47,16 @@ bool endsWithI(const char* s, const char* suffix)
     return a >= b && startsWithI(s + a - b, suffix);
 }
 
+bool bytesEndWithI(const char* s, size_t length, const char* suffix)
+{
+    size_t suffixLength = strlen(suffix);
+    if (length < suffixLength) return false;
+    s += length - suffixLength;
+    for (size_t i = 0; i < suffixLength; ++i)
+        if (tolower((unsigned char)s[i]) != tolower((unsigned char)suffix[i])) return false;
+    return true;
+}
+
 bool equalsI(const char* a, const char* b)
 {
     while (*a && *b) {
@@ -48,6 +64,17 @@ bool equalsI(const char* a, const char* b)
         ++a; ++b;
     }
     return *a == *b;
+}
+
+std::string normalizedPath(const char* path, size_t length)
+{
+    while (length && (*path == '/' || *path == '\\')) { ++path; --length; }
+    std::string result(path, length);
+    for (char& c : result) {
+        if (c == '\\') c = '/';
+        else c = (char)tolower((unsigned char)c);
+    }
+    return result;
 }
 
 } // namespace
@@ -112,7 +139,7 @@ UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
     }
 
     UINT32 found = 0, pos = 0;
-    for (UINT32 i = 0; i < count && pos + 46 <= cdSize; ++i) {
+    while (pos + 46 <= cdSize) {
         const BYTE* c = cd + pos;
         if (u32(c) != 0x02014B50) break;
         UINT32 compSize = u32(c + 20), rawSize = u32(c + 24), localAt = u32(c + 42);
@@ -129,6 +156,8 @@ UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
         bool isMap = nameLen < sizeof(name) && startsWithI(name, "Bin/Maps_") &&
                      endsWithI(name, ".bin") &&
                      (!mapNameFilter || !*mapNameFilter || strstr(name, mapNameFilter));
+        if (bytesEndWithI((const char*)c + 46, nameLen, ".hi.bin"))
+            g_payloadEntries.push_back(normalizedPath((const char*)c + 46, nameLen));
         if (method == 0 && disk == 0 && compSize == rawSize && (isPack || isMap)) {
             BYTE local[30];
             if (localAt <= fileSize - sizeof(local) && readAt(h, localAt, local, sizeof(local)) &&
@@ -158,6 +187,7 @@ UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
                  const char* mapNameFilter)
 {
     memset(pack, 0, sizeof(*pack));
+    g_payloadEntries.clear();
     char root[MAX_PATH];
     if (!dataRoot(root, MAX_PATH)) return 0;
 
@@ -180,9 +210,19 @@ UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
                                   mapCap - found, mapNameFilter);
     } while (FindNextFileA(find, &fd));
     FindClose(find);
-    Log::write("MapLoader: searched %u archives, pack=%s", archives,
-               pack->path[0] ? pack->path : "not found");
+    std::sort(g_payloadEntries.begin(), g_payloadEntries.end());
+    g_payloadEntries.erase(std::unique(g_payloadEntries.begin(), g_payloadEntries.end()),
+                           g_payloadEntries.end());
+    Log::write("MapLoader: searched %u archives, pack=%s, hi-res payloads=%u", archives,
+               pack->path[0] ? pack->path : "not found",
+               (UINT32)g_payloadEntries.size());
     return found;
+}
+
+bool hasPayload(const char* relativePath)
+{
+    std::string path = normalizedPath(relativePath, strlen(relativePath));
+    return std::binary_search(g_payloadEntries.begin(), g_payloadEntries.end(), path);
 }
 
 bool load(const char* virtualPath)

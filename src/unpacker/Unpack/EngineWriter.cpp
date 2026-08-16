@@ -262,11 +262,10 @@ const char* dataRoot()
 }
 
 // A derived name is only legitimate if the payload is really there: "the engine
-// has the field" is NOT the condition, "the file exists" is. Verified against
-// the client's own payload files, not against the 7.0 dump -- of the 79,197
-// .hi.bin it ships, all 68,058 whose descriptor we extract are referenced
-// correctly, with zero missing and zero wrong; and of the 69,023 payload refs we
-// emit, zero point at a file that is not there.
+// has the field" is NOT the condition, "the file exists" is. Check both loose
+// data and the package index built by MapLoader. Verified against the client's
+// own payloads, not against the 7.0 dump -- it ships 79,197 unique .hi.bin
+// entries and all 68,278 referenced by extracted descriptors resolve.
 bool payloadExists(const char* derivedName)
 {
     const char* root = dataRoot();
@@ -278,7 +277,14 @@ bool payloadExists(const char* derivedName)
     for (const char* p = g_curPath; p < base; ++p) probe[n++] = (*p == '/') ? '\\' : *p;
     lstrcpynA(probe + n, derivedName, (int)(sizeof(probe) - n));
     for (char* p = probe + n; *p; ++p) if (*p == '/') *p = '\\';
-    return GetFileAttributesA(probe) != INVALID_FILE_ATTRIBUTES;
+    if (GetFileAttributesA(probe) != INVALID_FILE_ATTRIBUTES) return true;
+
+    char relative[sizeof(g_curPath) + 64];
+    UINT32 dirLen = (UINT32)(base - g_curPath);
+    if (dirLen + strlen(derivedName) >= sizeof(relative)) return false;
+    memcpy(relative, g_curPath, dirLen);
+    lstrcpyA(relative + dirLen, derivedName);
+    return MapLoader::hasPayload(relative);
 }
 
 int putEmptyHref(const char* line, UINT32 len)

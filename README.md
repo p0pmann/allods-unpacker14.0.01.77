@@ -88,8 +88,10 @@ When deploying manually, set the required absolute `OutputDir` value in
 
 - The original `pango.dll` is preserved as `pango_orig.dll`.
 - Primary `binaryFile` references are emitted even when payload archives have
-  not yet been expanded into loose files. Only optional `.hi.bin` references
-  are suppressed when the corresponding payload is absent.
+  not yet been expanded into loose files. Optional `.hi.bin` references are
+  resolved from both loose files and the installed `.pak` central directories,
+  so clean-client extraction produces complete payload links without a repair
+  pass.
 - MinHook is vendored under `src/unpacker/Hooks/minhook` under its BSD-2-Clause
   license.
 
