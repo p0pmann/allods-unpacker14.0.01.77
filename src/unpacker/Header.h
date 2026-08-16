@@ -104,7 +104,7 @@ struct Database {
 bool dataRoot(char* out, UINT32 cch);      // "<client>\data\"
 UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
                  const char* mapNameFilter);
-bool hasPayload(const char* relativePath); // loose-style path found inside a .pak
+bool hasPayload(const char* relativePath); // payload path found inside a .pak
 bool load(const char* virtualPath);
 }
 

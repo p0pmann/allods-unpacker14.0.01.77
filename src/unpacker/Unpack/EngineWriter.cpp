@@ -211,11 +211,10 @@ void putRelativised(const char* s, UINT32 n, const char* curDir, UINT32 curDirLe
 //     (bumpTexture, shadowSettings, mainHandItem, visualItemClass, ...).
 // Returns KEEP (not an empty href), WROTE (rewritten), or OMIT.
 //
-// OMIT applies to ONE case only: an optional binaryFile2 whose .hi.bin payload
-// is not installed. Primary payload links must always be written. During a full
-// unpack the payload archives may not have been expanded into data yet, so using
-// loose-file existence to suppress binaryFile dropped nearly every texture,
-// geometry, animation and collision payload link from a clean client.
+// OMIT applies to every derived payload field when its exact payload does not
+// exist. The engine exposes these fields even for resources that have no binary
+// data, so the presence of the field alone is not evidence that a link is valid.
+// Both loose files and installed archive entries are checked below.
 enum { KEEP, WROTE, OMIT };
 
 // Fields that reference the resource's OWN payload file rather than another
@@ -229,16 +228,15 @@ struct Payload {
     const char* suffix;
     bool cutAtUnderscore;
     bool absolute;
-    bool optional;
 };
 
 const Payload kPayload[] = {
-    { "binaryFile",        ".bin",               false, false, false },
-    { "binaryFile2",       ".hi.bin",            false, false, true  },
-    { "BinaryFile",        "terrain.bin",        true,  false, false },
-    { "BinaryFileDown",    "terrainDown.bin",    true,  false, false },
-    { "compressedTerrain", "terrainDump.bin",    true,  true,  false },
-    { "extraOcclusion",    "terrainDumpOcc.bin", true,  true,  false },
+    { "binaryFile",        ".bin",               false, false },
+    { "binaryFile2",       ".hi.bin",            false, false },
+    { "BinaryFile",        "terrain.bin",        true,  false },
+    { "BinaryFileDown",    "terrainDown.bin",    true,  false },
+    { "compressedTerrain", "terrainDump.bin",    true,  true  },
+    { "extraOcclusion",    "terrainDumpOcc.bin", true,  true  },
 };
 
 const Payload* payloadRule(const char* name, UINT32 len)
@@ -264,12 +262,13 @@ const char* dataRoot()
 // A derived name is only legitimate if the payload is really there: "the engine
 // has the field" is NOT the condition, "the file exists" is. Check both loose
 // data and the package index built by MapLoader. Verified against the client's
-// own payloads, not against the 7.0 dump -- it ships 79,197 unique .hi.bin
-// entries and all 68,278 referenced by extracted descriptors resolve.
+// own payloads, not against the 7.0 dump. This check is necessary for primary
+// .bin files as well: some engine objects expose binaryFile even though no
+// corresponding payload was shipped.
 bool payloadExists(const char* derivedName)
 {
     const char* root = dataRoot();
-    if (!root[0]) return true;             // cannot check -- do not suppress
+    if (!root[0]) return false;            // cannot prove the reference is valid
     char probe[MAX_PATH * 2];
     const char* base = g_curPath;
     for (const char* p = g_curPath; *p; ++p) if (*p == '/') base = p + 1;
@@ -328,7 +327,7 @@ int putEmptyHref(const char* line, UINT32 len)
     memcpy(derived, base, stem);
     lstrcpynA(derived + stem, d->suffix, (int)(sizeof(derived) - stem));
 
-    if (d->optional && !payloadExists(derived)) return OMIT;
+    if (!payloadExists(derived)) return OMIT;
 
     put(line, nameStart);                            // indent + '<'
     put(name, nameLen);

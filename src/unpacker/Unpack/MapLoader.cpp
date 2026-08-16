@@ -3,8 +3,9 @@
 // The installed client keeps its per-map databases as stored ZIP entries under
 // data/Packs. Archive names are discovered at runtime. The client VFS can mount
 // entries by their virtual Bin/... name. We parse only the ZIP directories so
-// Fixups can read the same bytes in place and EngineWriter can resolve optional
-// payloads without extracting them first; nothing is copied into data/Bin.
+// Fixups can read the same bytes in place and EngineWriter can validate derived
+// payload references without extracting them first; nothing is copied into
+// data/Bin.
 #include "../Header.h"
 
 #include <cctype>
@@ -156,7 +157,7 @@ UINT32 enumerateArchive(const char* archive, Database* pack, Database* maps,
         bool isMap = nameLen < sizeof(name) && startsWithI(name, "Bin/Maps_") &&
                      endsWithI(name, ".bin") &&
                      (!mapNameFilter || !*mapNameFilter || strstr(name, mapNameFilter));
-        if (bytesEndWithI((const char*)c + 46, nameLen, ".hi.bin"))
+        if (bytesEndWithI((const char*)c + 46, nameLen, ".bin"))
             g_payloadEntries.push_back(normalizedPath((const char*)c + 46, nameLen));
         if (method == 0 && disk == 0 && compSize == rawSize && (isPack || isMap)) {
             BYTE local[30];
@@ -213,7 +214,7 @@ UINT32 enumerate(Database* pack, Database* maps, UINT32 mapCap,
     std::sort(g_payloadEntries.begin(), g_payloadEntries.end());
     g_payloadEntries.erase(std::unique(g_payloadEntries.begin(), g_payloadEntries.end()),
                            g_payloadEntries.end());
-    Log::write("MapLoader: searched %u archives, pack=%s, hi-res payloads=%u", archives,
+    Log::write("MapLoader: searched %u archives, pack=%s, payloads=%u", archives,
                pack->path[0] ? pack->path : "not found",
                (UINT32)g_payloadEntries.size());
     return found;
