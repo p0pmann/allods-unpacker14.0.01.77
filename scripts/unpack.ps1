@@ -30,12 +30,15 @@ $unpackerDll = Join-Path $gameBin 'AllodsUnpacker14.dll'
 $unpackerIni = Join-Path $gameBin 'AllodsUnpacker14.ini'
 $trigger = Join-Path $gameBin 'WRITE_NOW'
 $log = Join-Path $gameBin 'AllodsUnpacker14.log'
+$globalConfig = Join-Path $ClientDir 'Personal\Global.cfg'
 $process = $null
 $installedCarrier = $false
+$globalConfigBytes = $null
+$globalConfigChanged = $false
 
 function Invoke-UnpackerBuild {
     $nmake = Get-Command 'nmake.exe' -ErrorAction SilentlyContinue
-    if ($nmake) {
+    if ($nmake -and $env:VSCMD_ARG_TGT_ARCH -eq 'x86') {
         Push-Location $root
         try {
             & $nmake.Source /nologo /f Makefile
@@ -108,6 +111,21 @@ try {
     Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
+    # D3D9 exclusive fullscreen device creation fails in Remote Desktop sessions
+    # before the pack database is ready. Force windowed startup for this run and
+    # restore the user's configuration byte-for-byte in finally.
+    if (Test-Path -LiteralPath $globalConfig -PathType Leaf) {
+        $globalConfigBytes = [IO.File]::ReadAllBytes($globalConfig)
+        $globalConfigText = [Text.Encoding]::UTF8.GetString($globalConfigBytes)
+        $windowedText = [Text.RegularExpressions.Regex]::Replace(
+            $globalConfigText, '(?m)^gfxFullScreen=1(?=\r?$)', 'gfxFullScreen=0')
+        if ($windowedText -ne $globalConfigText) {
+            [IO.File]::WriteAllText($globalConfig, $windowedText, [Text.UTF8Encoding]::new($false))
+            $globalConfigChanged = $true
+            Write-Host 'Temporarily forcing windowed mode for reliable D3D9 startup.'
+        }
+    }
+
     $process = Start-Process -FilePath $gameExe -WorkingDirectory $gameBin -PassThru
     $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
 
@@ -139,13 +157,31 @@ try {
     Write-Host "Extraction complete: $OutputDir"
 }
 finally {
-    if ($process -and -not $process.HasExited) {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    if ($process) {
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
         $process.WaitForExit(5000) | Out-Null
+        $process.Dispose()
     }
     Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
+    if ($globalConfigChanged -and $globalConfigBytes) {
+        [IO.File]::WriteAllBytes($globalConfig, $globalConfigBytes)
+    }
     if ($installedCarrier -and (Test-Path -LiteralPath $carrierBackup)) {
-        Remove-Item -LiteralPath $stockCarrier -Force -ErrorAction SilentlyContinue
-        Move-Item -LiteralPath $carrierBackup -Destination $stockCarrier
+        $restoreError = $null
+        for ($attempt = 0; $attempt -lt 50; ++$attempt) {
+            try {
+                Remove-Item -LiteralPath $stockCarrier -Force -ErrorAction SilentlyContinue
+                Move-Item -LiteralPath $carrierBackup -Destination $stockCarrier -ErrorAction Stop
+                $restoreError = $null
+                break
+            }
+            catch {
+                $restoreError = $_
+                Start-Sleep -Milliseconds 100
+            }
+        }
+        if ($restoreError) { throw "Failed to restore the stock pango.dll: $restoreError" }
     }
 }

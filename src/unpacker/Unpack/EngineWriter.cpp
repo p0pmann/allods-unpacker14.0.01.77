@@ -456,11 +456,20 @@ UINT32 runContainer(const char* label)
         if (trace) Log::write("  [%u] %s vt=%08X %s -> %s slot=%d id=%u",
                               i, path, vt, shortName, root, slot, r->resourceId);
 
-        if (!serialize(objAddr, slot, root, path)) { ++failed; continue; }
-        if (trace) Log::write("  [%u] serialized %u bytes", i, Sink::size());
-        if (Sink::size() < 8) { ++empty; continue; }
-
-        finish(Sink::data(), Sink::size(), root, r->resourceId);
+        // LoginEventGoal's slot 10 is a read-side visitor that happens to push
+        // more field-name strings than its serializer. It fail-fasts when given
+        // a write archive; slot 6 invents inherited placeholders. The verified
+        // client document contains only its resource header, so bypass both.
+        bool headerOnly = strcmp(shortName, "LoginEventGoal") == 0;
+        if (headerOnly) {
+            const char emptyRoot[] = "<Base />";
+            finish(emptyRoot, sizeof(emptyRoot) - 1, root, r->resourceId);
+        } else {
+            if (!serialize(objAddr, slot, root, path)) { ++failed; continue; }
+            if (trace) Log::write("  [%u] serialized %u bytes", i, Sink::size());
+            if (Sink::size() < 8) { ++empty; continue; }
+            finish(Sink::data(), Sink::size(), root, r->resourceId);
+        }
         if (g_docEmpty && emptyHrefsInFile(path) < g_docEmpty) { ++kept; continue; }
         bool ok = Fs::write(path, g_doc, g_docLen);
         if (trace) Log::write("  [%u] write %s (%u bytes)", i, ok ? "OK" : "FAILED", g_docLen);

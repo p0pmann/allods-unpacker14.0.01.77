@@ -47,6 +47,10 @@ and waits for completion. Extracted `.xdb` files are written to the mandatory
 absolute `-OutputDir`. The launched client is stopped and the original carrier
 is restored when the run finishes or fails.
 
+For reliable Direct3D 9 initialization in Remote Desktop sessions, the harness
+temporarily changes `Personal\Global.cfg` from exclusive fullscreen to windowed
+mode. The original configuration bytes are restored after success or failure.
+
 The run discovers `Bin/pack.bin` and every `Bin/Maps_*.bin` database at runtime
 inside `data\Packs\*.pak`. Map databases are mounted through the client VFS and
 all database bytes stay in their owning archives; nothing is copied into
