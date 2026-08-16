@@ -211,11 +211,11 @@ void putRelativised(const char* s, UINT32 n, const char* curDir, UINT32 curDirLe
 //     (bumpTexture, shadowSettings, mainHandItem, visualItemClass, ...).
 // Returns KEEP (not an empty href), WROTE (rewritten), or OMIT.
 //
-// OMIT applies to ONE case only: a derived payload reference whose file is not
-// installed. The oracle does not write <binaryFile2 href="" /> -- it leaves the
-// element out entirely (absent in 19,205 of 20,000 files), so an empty one would
-// be just as invented as a bogus path. Every other unresolved reference is still
-// kept, because there the engine emitting the element is what proves the field.
+// OMIT applies to ONE case only: an optional binaryFile2 whose .hi.bin payload
+// is not installed. Primary payload links must always be written. During a full
+// unpack the payload archives may not have been expanded into data yet, so using
+// loose-file existence to suppress binaryFile dropped nearly every texture,
+// geometry, animation and collision payload link from a clean client.
 enum { KEEP, WROTE, OMIT };
 
 // Fields that reference the resource's OWN payload file rather than another
@@ -224,15 +224,21 @@ enum { KEEP, WROTE, OMIT };
 // validated against the whole 7.0 oracle: 3,705 + 1,988 + 3,750 + 3,402
 // instances, zero name mismatches. `absolute` follows whichever form the oracle
 // uses for that field (terrain dumps are written absolute, the rest bare).
-struct Payload { const char* field; const char* suffix; bool cutAtUnderscore; bool absolute; };
+struct Payload {
+    const char* field;
+    const char* suffix;
+    bool cutAtUnderscore;
+    bool absolute;
+    bool optional;
+};
 
 const Payload kPayload[] = {
-    { "binaryFile",        ".bin",               false, false },
-    { "binaryFile2",       ".hi.bin",            false, false },
-    { "BinaryFile",        "terrain.bin",        true,  false },
-    { "BinaryFileDown",    "terrainDown.bin",    true,  false },
-    { "compressedTerrain", "terrainDump.bin",    true,  true  },
-    { "extraOcclusion",    "terrainDumpOcc.bin", true,  true  },
+    { "binaryFile",        ".bin",               false, false, false },
+    { "binaryFile2",       ".hi.bin",            false, false, true  },
+    { "BinaryFile",        "terrain.bin",        true,  false, false },
+    { "BinaryFileDown",    "terrainDown.bin",    true,  false, false },
+    { "compressedTerrain", "terrainDump.bin",    true,  true,  false },
+    { "extraOcclusion",    "terrainDumpOcc.bin", true,  true,  false },
 };
 
 const Payload* payloadRule(const char* name, UINT32 len)
@@ -316,7 +322,7 @@ int putEmptyHref(const char* line, UINT32 len)
     memcpy(derived, base, stem);
     lstrcpynA(derived + stem, d->suffix, (int)(sizeof(derived) - stem));
 
-    if (!payloadExists(derived)) return OMIT;
+    if (d->optional && !payloadExists(derived)) return OMIT;
 
     put(line, nameStart);                            // indent + '<'
     put(name, nameLen);
