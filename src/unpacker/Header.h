@@ -66,7 +66,7 @@ void*       object();             // the fake source object handed to the archiv
 namespace Fixups {
 bool   load(const char* containerPath);
 bool   loadSlice(const char* archivePath, UINT32 offset, UINT32 size);
-UINT32 targetFor(UINT32 slotBlobOffset);
+UINT32 nextTarget(UINT32 slotBlobOffset, UINT32* cursor);
 UINT32 count();
 }
 

@@ -51,12 +51,13 @@ int refWrite(int arc, int name, int flags, unsigned* objp, RefSerFn orig)
     // <shadowSettings /> and the material textures went missing.
     const char* href = nullptr;
     __try {
-        if (tgt) {
+        if (tgt)
             href = HrefMap::lookupFrom(tgt, EngineWriter::currentPath());
-        } else if (objp) {
-            // Null pointer: the target lives in another database, so the loader
-            // never bound it. The container's fixup stream still records it,
-            // keyed by the address of this very field.
+        if (!href && objp) {
+            // A foreign target may be null, or the resource manager may have
+            // rebound it to a runtime object outside both container blobs. In
+            // either case the on-disk fixup stream is authoritative and is
+            // keyed by the address of this very pointer field.
             href = HrefMap::lookupExternal((UINT32)(UINT_PTR)objp, EngineWriter::currentPath());
             if (href) InterlockedIncrement(&g_external);
         }

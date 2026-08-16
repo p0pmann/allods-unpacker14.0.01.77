@@ -26,13 +26,14 @@ $gameBin = Join-Path $ClientDir 'bin'
 $gameExe = Join-Path $gameBin 'AOgame.exe'
 $stockCarrier = Join-Path $gameBin 'pango.dll'
 $carrierBackup = Join-Path $gameBin 'pango_orig.dll'
+$activeCarrierBackup = Join-Path $gameBin ".AllodsUnpacker14.$PID.pango.dll"
 $unpackerDll = Join-Path $gameBin 'AllodsUnpacker14.dll'
 $unpackerIni = Join-Path $gameBin 'AllodsUnpacker14.ini'
 $trigger = Join-Path $gameBin 'WRITE_NOW'
 $log = Join-Path $gameBin 'AllodsUnpacker14.log'
 $globalConfig = Join-Path $ClientDir 'Personal\Global.cfg'
 $process = $null
-$installedCarrier = $false
+$carrierRestoreSource = $null
 $globalConfigBytes = $null
 $globalConfigChanged = $false
 
@@ -88,28 +89,24 @@ if (-not (Test-Path -LiteralPath $builtCarrier) -or -not (Test-Path -LiteralPath
 }
 
 try {
-    if (-not (Test-Path -LiteralPath $carrierBackup)) {
-        if (-not (Test-Path -LiteralPath $stockCarrier)) {
-            throw "The stock pango.dll was not found at '$stockCarrier'."
+    if (-not (Test-Path -LiteralPath $stockCarrier)) {
+        throw "The active pango.dll was not found at '$stockCarrier'."
+    }
+    if (Test-Path -LiteralPath $carrierBackup) {
+        if (Test-Path -LiteralPath $activeCarrierBackup) {
+            throw "Temporary carrier backup already exists at '$activeCarrierBackup'."
         }
+        Move-Item -LiteralPath $stockCarrier -Destination $activeCarrierBackup
+        $carrierRestoreSource = $activeCarrierBackup
+    }
+    else {
         Move-Item -LiteralPath $stockCarrier -Destination $carrierBackup
+        $carrierRestoreSource = $carrierBackup
     }
 
     Copy-Item -LiteralPath $builtCarrier -Destination $stockCarrier -Force
-    $installedCarrier = $true
     Copy-Item -LiteralPath $builtUnpacker -Destination $unpackerDll -Force
     Copy-Item -LiteralPath (Join-Path $root 'config\AllodsUnpacker14.ini') -Destination $unpackerIni -Force
-
-    $ini = foreach ($line in Get-Content -LiteralPath $unpackerIni) {
-        if ($line -match '^OutputDir=') { "OutputDir=$OutputDir" }
-        elseif ($line -match '^Scope=') { "Scope=$Scope" }
-        elseif ($line -match '^Limit=') { "Limit=$Limit" }
-        else { $line }
-    }
-    Set-Content -LiteralPath $unpackerIni -Value $ini -Encoding Ascii
-
-    Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
     # D3D9 exclusive fullscreen device creation fails in Remote Desktop sessions
     # before the pack database is ready. Force windowed startup for this run and
@@ -126,33 +123,68 @@ try {
         }
     }
 
-    $process = Start-Process -FilePath $gameExe -WorkingDirectory $gameBin -PassThru
-    $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
-
-    Write-Host 'Waiting for the client database to become ready...'
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
-        if ((Test-Path -LiteralPath $log) -and
-            (Select-String -LiteralPath $log -SimpleMatch 'main thread frozen' -Quiet)) { break }
-        Start-Sleep -Milliseconds 250
-        $process.Refresh()
+    # A single 32-bit process accumulates serializer state across the 486k base
+    # resources and every map database. Full extraction therefore runs one
+    # top-level resource scope per process. Explicit scopes and limited smoke
+    # runs remain single-process.
+    if ($Scope -or $Limit) {
+        [string[]]$runScopes = @($Scope)
     }
-    if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the client freeze.' }
-
-    New-Item -ItemType File -Path $trigger -Force | Out-Null
-    Write-Host 'Extraction started...'
-
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
-        if ((Test-Path -LiteralPath $log) -and
-            (Select-String -LiteralPath $log -SimpleMatch 'ALL DONE' -Quiet)) { break }
-        Start-Sleep -Seconds 1
-        $process.Refresh()
+    else {
+        [string[]]$runScopes = @(
+            'Account', 'Characters', 'Client', 'Creatures', 'CutScenes',
+            'Interface', 'ItemMall', 'Items', 'Maps', 'Material', 'Mechanics',
+            'SFX', 'Ships', 'Spells', 'System', 'World'
+        )
     }
-    if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for extraction to complete.' }
 
-    Select-String -LiteralPath $log -Pattern ' done selected=' | ForEach-Object {
-        Write-Host "Extraction summary: $($_.Line.Trim())"
+    for ($scopeIndex = 0; $scopeIndex -lt $runScopes.Count; ++$scopeIndex) {
+        $runScope = $runScopes[$scopeIndex]
+        $ini = foreach ($line in Get-Content -LiteralPath $unpackerIni) {
+            if ($line -match '^OutputDir=') { "OutputDir=$OutputDir" }
+            elseif ($line -match '^Scope=') { "Scope=$runScope" }
+            elseif ($line -match '^Limit=') { "Limit=$Limit" }
+            else { $line }
+        }
+        Set-Content -LiteralPath $unpackerIni -Value $ini -Encoding Ascii
+        Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+
+        $label = if ($runScope) { $runScope } else { '<all>' }
+        Write-Host "Waiting for client database (scope $label)..."
+        $process = Start-Process -FilePath $gameExe -WorkingDirectory $gameBin -WindowStyle Hidden -PassThru
+        $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
+            if ((Test-Path -LiteralPath $log) -and
+                (Select-String -LiteralPath $log -SimpleMatch 'main thread frozen' -Quiet)) { break }
+            Start-Sleep -Milliseconds 250
+            $process.Refresh()
+        }
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the client freeze.' }
+
+        New-Item -ItemType File -Path $trigger -Force | Out-Null
+        Write-Host "Extraction started (scope $label)..."
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if ($process.HasExited) { throw "AOgame.exe exited with code $($process.ExitCode)." }
+            if ((Test-Path -LiteralPath $log) -and
+                (Select-String -LiteralPath $log -SimpleMatch 'ALL DONE' -Quiet)) { break }
+            Start-Sleep -Seconds 1
+            $process.Refresh()
+        }
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for extraction to complete.' }
+
+        Select-String -LiteralPath $log -Pattern ' done selected=' | ForEach-Object {
+            Write-Host "Extraction summary: $($_.Line.Trim())"
+        }
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+        $process.WaitForExit(5000) | Out-Null
+        $process.Dispose()
+        $process = $null
+        Remove-Item -LiteralPath $trigger -Force -ErrorAction SilentlyContinue
+        if ($scopeIndex + 1 -lt $runScopes.Count) { Start-Sleep -Seconds 8 }
     }
     Write-Host "Extraction complete: $OutputDir"
 }
@@ -168,12 +200,12 @@ finally {
     if ($globalConfigChanged -and $globalConfigBytes) {
         [IO.File]::WriteAllBytes($globalConfig, $globalConfigBytes)
     }
-    if ($installedCarrier -and (Test-Path -LiteralPath $carrierBackup)) {
+    if ($carrierRestoreSource -and (Test-Path -LiteralPath $carrierRestoreSource)) {
         $restoreError = $null
         for ($attempt = 0; $attempt -lt 50; ++$attempt) {
             try {
                 Remove-Item -LiteralPath $stockCarrier -Force -ErrorAction SilentlyContinue
-                Move-Item -LiteralPath $carrierBackup -Destination $stockCarrier -ErrorAction Stop
+                Move-Item -LiteralPath $carrierRestoreSource -Destination $stockCarrier -ErrorAction Stop
                 $restoreError = $null
                 break
             }

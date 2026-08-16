@@ -348,6 +348,8 @@ void putBody(const char* s, UINT32 n)
     const char* slash = nullptr;
     for (const char* p = g_curPath; *p; ++p) if (*p == '/') slash = p;
     UINT32 curDirLen = slash ? (UINT32)(slash - curDir) : 0;
+    bool inSound = false;
+    bool musicSound = false;
 
     for (UINT32 i = 0; i < n;) {
         UINT32 e = i;
@@ -356,10 +358,33 @@ void putBody(const char* s, UINT32 n)
         UINT32 trimmed = len;
         while (trimmed && (unsigned char)s[i + trimmed - 1] <= ' ') --trimmed;
 
-        int what = putEmptyHref(s + i, trimmed);
+        UINT32 content = 0;
+        while (content < trimmed && (unsigned char)s[i + content] <= ' ') ++content;
+        const char* line = s + i + content;
+        UINT32 contentLen = trimmed - content;
+        if (contentLen == 7 && !memcmp(line, "<sound>", 7)) {
+            inSound = true;
+            musicSound = false;
+        } else if (inSound && contentLen > 12 && !memcmp(line, "<name>Music/", 12)) {
+            musicSound = true;
+        }
+
+        int what = KEEP;
+        if (inSound && musicSound && contentLen == 20 &&
+            !memcmp(line, "<project href=\"/\" />", 20)) {
+            put(s + i, content);
+            puts_("<project href=\"/SFX/Music/Music.(FMODProject).xdb#xpointer(/FMODProject)\" />");
+            what = WROTE;
+        } else {
+            what = putEmptyHref(s + i, trimmed);
+        }
         if (what == KEEP) putRelativised(s + i, len, curDir, curDirLen);
         // OMIT swallows the newline too, so no blank line is left behind.
         if (what != OMIT && e < n) put("\n", 1);
+        if (contentLen == 8 && !memcmp(line, "</sound>", 8)) {
+            inSound = false;
+            musicSound = false;
+        }
         i = (e < n) ? e + 1 : e;
     }
 }

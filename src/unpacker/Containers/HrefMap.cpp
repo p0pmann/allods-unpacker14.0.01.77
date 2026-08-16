@@ -161,9 +161,12 @@ void setContainerBase(UINT32 blobBase, bool isPack)
 const char* lookupExternal(UINT32 slotAddr, const char* curPath)
 {
     if (!g_packBase || !g_curBase || slotAddr < g_curBase) return nullptr;
-    UINT32 target = Fixups::targetFor(slotAddr - g_curBase);
-    if (!target) return nullptr;
-    return lookupFrom(g_packBase + target, curPath);
+    UINT32 cursor = 0, target = 0;
+    while ((target = Fixups::nextTarget(slotAddr - g_curBase, &cursor)) != 0) {
+        const char* href = lookupFrom(g_packBase + target, curPath);
+        if (href) return href;
+    }
+    return nullptr;
 }
 
 UINT32 count() { return g_base.n + g_cur.n; }

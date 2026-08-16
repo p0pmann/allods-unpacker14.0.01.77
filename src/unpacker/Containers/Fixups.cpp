@@ -95,7 +95,10 @@ bool parse(UINT32 rawLen)
 
     const UINT32* p = (const UINT32*)(g_dst + blob0);
     UINT32 words = blobSize / 4;
-    for (UINT32 i = 0; i + 1 < words && g_n < EXT_CAP; i += 2) {
+    // Pair streams can start on either 4-byte phase. Maps_ZoneContested6_inst,
+    // for example, stores its music-project fixup at blob+0x12B6DC. Walking in
+    // 8-byte steps from blob start silently skipped that entire phase.
+    for (UINT32 i = 0; i + 1 < words && g_n < EXT_CAP; ++i) {
         UINT32 k = p[i], v = p[i + 1];
         if ((k & 7) != 4 || !v) continue;
         UINT32 slot = (k - 4) >> 1;
@@ -139,15 +142,21 @@ bool loadSlice(const char* archivePath, UINT32 offset, UINT32 size)
     return parse(readSlice(archivePath, offset, size));
 }
 
-UINT32 targetFor(UINT32 slot)
+UINT32 nextTarget(UINT32 slot, UINT32* cursor)
 {
-    UINT32 lo = 0, hi = g_n;
-    while (lo < hi) {
-        UINT32 mid = (lo + hi) >> 1;
-        if (g_ext[mid].slot == slot) return g_ext[mid].target;
-        if (g_ext[mid].slot < slot) lo = mid + 1; else hi = mid;
+    if (!cursor) return 0;
+    UINT32 at = *cursor;
+    if (!at) {
+        UINT32 lo = 0, hi = g_n;
+        while (lo < hi) {
+            UINT32 mid = (lo + hi) >> 1;
+            if (g_ext[mid].slot < slot) lo = mid + 1; else hi = mid;
+        }
+        at = lo;
     }
-    return 0;
+    if (at >= g_n || g_ext[at].slot != slot) return 0;
+    *cursor = at + 1;
+    return g_ext[at].target;
 }
 
 } // namespace Fixups

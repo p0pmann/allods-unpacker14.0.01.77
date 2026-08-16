@@ -56,6 +56,11 @@ inside `data\Packs\*.pak`. Map databases are mounted through the client VFS and
 all database bytes stay in their owning archives; nothing is copied into
 `data\Bin`.
 
+A full run automatically divides extraction by top-level resource directory and
+starts a fresh 32-bit client for each scope. This avoids cumulative serializer
+state exhausting the client during the 486,000-resource base database. Explicit
+`-Scope` and `-Limit` runs use one process.
+
 For a quick smoke run:
 
 ```powershell

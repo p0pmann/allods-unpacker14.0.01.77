@@ -22,9 +22,11 @@ bool load(const char* containerPath);
 // Maps_*.bin copy is needed.
 bool loadSlice(const char* archivePath, UINT32 offset, UINT32 size);
 
-// pack.bin blob offset for the reference stored at this blob-relative slot,
-// or 0 if the slot carries no external reference.
-UINT32 targetFor(UINT32 slotBlobOffset);
+// Return each candidate pack.bin blob offset for a blob-relative pointer slot.
+// Start cursor at zero and call until zero is returned. Candidate validation is
+// left to HrefMap because the decompressed blob may contain coincidental words
+// that resemble fixup pairs.
+UINT32 nextTarget(UINT32 slotBlobOffset, UINT32* cursor);
 
 UINT32 count();
 void   clear();
