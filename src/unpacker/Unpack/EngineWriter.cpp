@@ -221,8 +221,9 @@ enum { KEEP, WROTE, OMIT };
 // resource. The engine derives them from the resource path at load time and
 // stores nothing, so they always arrive unresolved. Every rule below was
 // validated against the whole 7.0 oracle: 3,705 + 1,988 + 3,750 + 3,402
-// instances, zero name mismatches. `absolute` follows whichever form the oracle
-// uses for that field (terrain dumps are written absolute, the rest bare).
+// instances, zero name mismatches. `absolute` is the field-wide default;
+// UITexture payloads are handled specially below because a loose descriptor
+// can refer to a payload that remains in a .pak.
 struct Payload {
     const char* field;
     const char* suffix;
@@ -244,6 +245,31 @@ const Payload* payloadRule(const char* name, UINT32 len)
     for (const Payload& p : kPayload)
         if (strlen(p.field) == len && !memcmp(name, p.field, len)) return &p;
     return nullptr;
+}
+
+bool endsWithI(const char* value, const char* suffix)
+{
+    size_t a = strlen(value), b = strlen(suffix);
+    if (a < b) return false;
+    value += a - b;
+    for (size_t i = 0; i < b; ++i)
+        if (tolower((unsigned char)value[i]) !=
+            tolower((unsigned char)suffix[i])) return false;
+    return true;
+}
+
+// UI texture descriptors are loaded loose under -loadBinaries 0 while their
+// binary payloads remain in Interface*.pak. A bare same-directory href does not
+// reliably cross that backing-store boundary in this client (the options
+// MainFrame becomes transparent). Both the 7.0 oracle for this resource and the
+// 17.0 extracted client use an absolute VFS path. Other primary payload types
+// retain their established relative form.
+bool writePayloadAbsolute(const Payload& payload)
+{
+    return payload.absolute ||
+           ((!strcmp(payload.field, "binaryFile") ||
+             !strcmp(payload.field, "binaryFile2")) &&
+            endsWithI(g_curPath, ".(UITexture).xdb"));
 }
 
 // "<client>\data\" -- payloads sit there under the same relative path as the
@@ -332,7 +358,7 @@ int putEmptyHref(const char* line, UINT32 len)
     put(line, nameStart);                            // indent + '<'
     put(name, nameLen);
     put(" href=\"", 7);
-    if (d->absolute) {
+    if (writePayloadAbsolute(*d)) {
         put("/", 1);
         put(g_curPath, (UINT32)(base - g_curPath));  // directory, trailing '/'
     }
